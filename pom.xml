@@ -4,9 +4,15 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>org.example</groupId>
-    <artifactId>Learn_Kafka</artifactId>
+    <name>dropbox-lite</name>
+    <groupId>org.rspk</groupId>
+    <artifactId>dropbox-lite</artifactId>
+    <packaging>war</packaging>
     <version>1.0</version>
+
+    <build>
+        <finalName>dropbox-lite</finalName>
+    </build>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
