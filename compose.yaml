@@ -1,0 +1,61 @@
+services:
+
+  tomcat:
+    container_name: dropbox-lite-tomcat
+
+    deploy:
+      replicas: 1
+
+    build:
+      context: . # for dockerfile
+      dockerfile: tomcat/Dockerfile
+
+    environment:
+      OWNER_MAIL: ${OWNER_MAIL:?OWNER_MAIL is required}
+      OWNER_PASSWORD: ${DROPBOX_LITE_OWNER_PASSWORD:?DROPBOX_LITE_OWNER_PASSWORD is required}
+
+    ports:
+    - published: 9091
+      target: 8080
+
+    networks:
+      - dropbox_lite_main_network
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+
+  postgres:
+    container_name: postgres.dropbox-lite.internal # dropbox-lite-postgres -- to match cloud
+
+    deploy:
+      replicas: 1
+
+    image: "postgres:latest"
+
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: dropbox-lite
+
+    ports:
+      - published: 5432
+        target: 5432
+
+    networks:
+      - dropbox_lite_main_network
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dropbox-lite"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
+
+
+networks:
+  dropbox_lite_main_network:
+
+
