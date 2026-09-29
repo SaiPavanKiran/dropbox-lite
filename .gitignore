@@ -6,6 +6,7 @@ target/
 /src/test
 /my_learnings
 /.idea
+/.aws-sam
 
 ### IntelliJ IDEA ###
 .idea/modules.xml

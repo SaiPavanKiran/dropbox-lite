@@ -1,0 +1,1303 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: 'dropboxLite project, Version:1.0'
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Description: 'Name of the S3 bucket containing your Tomcat web application files.'
+  PostgresUsername:
+    Type: String
+    Default: postgres # the default value if none was given
+    Description: 'Enter the postgres username'
+  PostgresPassword:
+    Type: String
+    NoEcho: true # prevents CloudFormation from displaying the parameter value in the CloudFormation console output, events, or stack details.
+    Default: password
+    Description: 'Enter the postgres password'
+  EmailForNotifications:
+    Type: String
+    Description: 'Enter your email address to get sns notifications'
+
+
+
+
+Resources:
+
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Description: 'The internet gateway to outer world'
+    Properties: {}
+
+  DropBoxLiteVPC:
+    Type: 'AWS::EC2::VPC'
+    Description: 'this is main vpc which contains all the networking elements'
+    Properties:
+      CidrBlock: 192.168.0.0/16
+      EnableDnsHostnames: true
+
+  DropBoxLiteVPCAndIGWAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Description: 'connecting vpc to internetgateway'
+    Properties:
+      VpcId: !Ref DropBoxLiteVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  VpcDnsHostedZone:
+    Type: 'AWS::Route53::HostedZone'
+    Properties:
+      Name: dropbox-lite.internal # this is private dns zone under drop-lite.internal
+      VPCs:
+        - VPCId: !Ref DropBoxLiteVPC
+          VPCRegion: !Ref AWS::Region  # Associates this private zone with the VPC in this AWS Region
+        # not publicly through the internet
+
+  WebsiteDnsZone:
+    Type: 'AWS::Route53::HostedZone'
+    Properties:
+      Name: dropbox-lite.com # WARNING! An unregistered domain -- need to register this domain first
+
+
+
+
+
+
+  #-------------------------------------------- Proxy (Public) ----------------------------------------------
+
+  # let's Manage ACL and Security Groups for public facing proxy
+
+  PublicProxyDnsRecord:
+    Type: 'AWS::Route53::RecordSet'
+    Properties:
+      HostedZoneId: !Ref WebsiteDnsZone
+      Name: www.rspk.dropbox-lite.com
+      Type: A
+      TTL: 7200 # 2 hours
+      ResourceRecords:
+        - !GetAtt ProxyEC2.PublicIp
+
+  PublicFacingProxySubnet:
+    Type: 'AWS::EC2::Subnet'
+    Description: "the public facing proxy to handle communication between users and internal ec2's"
+    Properties:
+      # noinspection YAMLIncompatibleTypes
+      AvailabilityZone: !Select [0, !GetAZs ''] #auto select 1st available zone in the deployed region
+      MapPublicIpOnLaunch: true # this proxy get public facing ipv4 address along with private ipv4
+      VpcId: !Ref DropBoxLiteVPC
+      CidrBlock: 192.168.1.0/24
+
+
+  ProxyRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref DropBoxLiteVPC
+  RouteTableAssociationWithProxySubnet:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PublicFacingProxySubnet
+      RouteTableId: !Ref ProxyRouteTable
+  RouteTableRoutes:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref ProxyRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+
+  ProxyIAMRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com # only ec2 are allowed to assume this role
+            Action:
+              - sts:AssumeRole #gives temporary credentials to identify
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  ProxyIAMInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Roles:
+        - !Ref ProxyIAMRole
+
+#  Internet ---> Proxy :80
+#  Proxy ---> Docker :8080
+
+  ProxyACL:
+    Type: 'AWS::EC2::NetworkAcl'
+    Properties:
+      VpcId: !Ref DropBoxLiteVPC
+  ProxySubnetACLAssociation:
+    Type: 'AWS::EC2::SubnetNetworkAclAssociation'
+    Properties:
+      SubnetId: !Ref PublicFacingProxySubnet
+      NetworkAclId: !Ref ProxyACL
+  #Ingress
+  ACLIngressClientIMCPProxyEntry:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref ProxyACL
+      Protocol: '1' #IMCP
+      RuleNumber: '1' # ACL Checks rules in order and continue with matched rule without checking others
+      RuleAction: 'allow'
+      CidrBlock: '0.0.0.0/0'
+      Egress: 'false'
+      Icmp:
+        Type: 8 #for echo req
+        Code: -1
+  ACLIngressInternetEphemeralProxyEntry:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref ProxyACL
+      Protocol: '6'
+      RuleNumber: '2'
+      RuleAction: 'allow'
+      CidrBlock: '0.0.0.0/0'
+      PortRange:
+        From: '1024'
+        To: '65535'
+      Egress: 'false'
+  ACLIngressInternet80ProxyEntry:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref ProxyACL
+      Protocol: '6' #TCP
+      RuleNumber: '3'
+      RuleAction: 'allow'
+      CidrBlock: '0.0.0.0/0'
+      PortRange:
+        From: '80'
+        To: '80'
+      Egress: 'false'
+  ACLIngressEC2EphemeralProxyEntry:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref ProxyACL
+      Protocol: '6'
+      RuleNumber: '4'
+      RuleAction: 'allow'
+      CidrBlock: '192.168.3.0/24'
+      PortRange:
+        From: '1024'
+        To: '65535'
+      Egress: 'false'
+  #Egress
+  ACLEgressProxyIMCPClientEntry:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref ProxyACL
+      Protocol: '1' #IMCP
+      RuleNumber: '5'
+      RuleAction: 'allow'
+      CidrBlock: '0.0.0.0/0'
+      Egress: 'true'
+      Icmp:
+        Type: 0 # for echo response
+        Code: -1
+  ACLEgressProxyEphemeralClientEntry:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref ProxyACL
+      Protocol: '6'
+      RuleNumber: '7'
+      RuleAction: 'allow'
+      CidrBlock: '0.0.0.0/0'
+      PortRange:
+        From: '1024'
+        To: '65535'
+      Egress: 'true'
+  ACLEgressProxy8080EC2Entry:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref ProxyACL
+      Protocol: '6' #TCP
+      RuleNumber: '8'
+      RuleAction: 'allow'
+      CidrBlock: '192.168.3.0/24'
+      PortRange:
+        From: '8080'
+        To: '8080'
+      Egress: 'true'
+#also need this as ingress
+# IN:
+  #0.0.0.0/0 → Proxy :1024-65535
+  ACLEgressSSMAgentToSSMManagerEntry:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref ProxyACL
+      Protocol: '6' #TCP
+      RuleNumber: '9'
+      RuleAction: 'allow'
+      CidrBlock: '0.0.0.0/0'
+      PortRange:
+        From: '443'
+        To: '443'
+      Egress: 'true'
+  #Needed to Deliver the otp to the user,
+  # The Gmail server does send response packets back. They are required for the SMTP connection to work. -- Tcp 2 way communication
+  # which is configured with RuleNumber 7
+  ACLEgressProxy587InternetEntry:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref ProxyACL
+      Protocol: '6' #SMTP over TCP (STARTTLS)
+      RuleNumber: '10'
+      RuleAction: 'allow'
+      CidrBlock: '0.0.0.0/0'
+      PortRange:
+        From: '587'
+        To: '587'
+      Egress: 'true'
+
+
+
+  ProxySecurityGroups:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Allowing all incoming and outgoing traffic'
+      VpcId: !Ref DropBoxLiteVPC
+      SecurityGroupIngress:
+        - IpProtocol: '-1'
+          FromPort: '-1'
+          ToPort: '-1'
+          CidrIp: '0.0.0.0/0'
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          FromPort: '-1'
+          ToPort: '-1'
+          CidrIp: '0.0.0.0/0'
+
+
+  ProxyEC2:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      SubnetId: !Ref PublicFacingProxySubnet
+      ImageId: 'ami-0006118602dfc1c09'
+      InstanceType: 't3.micro'
+      #      IamInstanceProfile: 'IAMADMINPROFILE' #Iam Role that is manually created -- not required
+      SecurityGroupIds:
+        - !GetAtt ProxySecurityGroups.GroupId
+      IamInstanceProfile: !Ref ProxyIAMInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+
+          dnf install -y nginx
+
+          cat > /etc/nginx/conf.d/dropbox-lite.conf <<EOF
+          server {
+              listen 80;
+
+              location / {
+                  proxy_pass http://${DockerEC2.PrivateIp}:8080;
+
+                  proxy_set_header Host \$host;
+                  proxy_set_header X-Real-IP \$remote_addr;
+                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \$scheme;
+              }
+          }
+          EOF
+
+          nginx -t
+          systemctl enable nginx
+          systemctl restart nginx
+
+    DependsOn: DropBoxLiteVPCAndIGWAttachment
+    # We need to manually tell CloudFormation about a dependency here.
+    # Without the attachment being created, the instance could launch but without access to the internet.
+
+
+
+
+
+
+  #----------------------------------------------------------------------------------------------------------
+
+
+  #------------------------------------------------- NAT ----------------------------------------------------
+
+  # Currently Just For Maintenance work To give the private subnet internet access
+  # Just testing the nat functionality which might be overkill for maintenance
+  NATSubnet:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      # noinspection YAMLIncompatibleTypes
+      AvailabilityZone: !Select [0, !GetAZs '']
+      VpcId: !Ref DropBoxLiteVPC
+      CidrBlock: 192.168.2.0/24
+
+  NATRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref DropBoxLiteVPC
+  NATRouteTableNATSubnetAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref NATSubnet
+      RouteTableId: !Ref NATRouteTable
+  NATRouteTableEntry:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref NATRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InternetGateway
+
+
+  NATACL:
+    Type: 'AWS::EC2::NetworkAcl'
+    Properties:
+      VpcId: !Ref DropBoxLiteVPC
+  NATACLSubnetAssociation:
+    Type: 'AWS::EC2::SubnetNetworkAclAssociation'
+    Properties:
+      SubnetId: !Ref NATSubnet
+      NetworkAclId: !Ref NATACL
+
+   # Maintenance
+  # Docker/postgres (on Ephemeral) --> 80/443 --> Nat  --> 80/443 --> internet
+  # internet (on Ephemeral) --> Nat  ---> Docker/postgres (on Ephemeral)
+
+  # SSM Manager
+  # Docker/postgres (on Ephemeral) --> 443 --> Nat --> 443 --> internet
+  # internet (on Ephemeral) --> Nat ---> Docker/postgres (on Ephemeral)
+
+  #Ingress
+  ACLIngressEC280NATEntry:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref NATACL
+      RuleNumber: '1'
+      Protocol: '6'
+      RuleAction: 'allow'
+      CidrBlock: '192.168.0.0/16' # Allow all private subnet EC2
+      Egress: 'false'
+      PortRange:
+        From: '80'
+        To: '80'
+  ACLIngressEC2443NATEntry:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref NATACL
+      Protocol: '6'
+      RuleNumber: '2'
+      RuleAction: 'allow'
+      CidrBlock: '192.168.0.0/16'
+      PortRange:
+        From: '443'
+        To: '443'
+      Egress: 'false'
+  ACLIngressClientEphemeralNATEntry:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref NATACL
+      Protocol: '6' #TCP
+      RuleNumber: '3'
+      RuleAction: 'allow'
+      CidrBlock: '0.0.0.0/0'
+      PortRange:
+        From: '1024'
+        To: '65535'
+      Egress: 'false'
+  #Egress
+  ACLEgressNAT80ClientEntry:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref NATACL
+      RuleNumber: '4'
+      Protocol: '6'
+      RuleAction: 'allow'
+      CidrBlock: '0.0.0.0/0'
+      Egress: 'true'
+      PortRange:
+        From: '80'
+        To: '80'
+  ACLEgressNAT443ClientEntry:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref NATACL
+      Protocol: '6'
+      RuleNumber: '5'
+      RuleAction: 'allow'
+      CidrBlock: '0.0.0.0/0'
+      PortRange:
+        From: '443'
+        To: '443'
+      Egress: 'true'
+  ACLEgressNATEphemeralEC2Entry:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref NATACL
+      Protocol: '6'
+      RuleNumber: '6'
+      RuleAction: 'allow'
+      CidrBlock: '192.168.0.0/16'
+      PortRange:
+        From: '1024'
+        To: '65535'
+      Egress: 'true'
+
+
+
+
+  EIPNAT: # ⚠️Warning! Adding multiple EIP to the same aws resource can incur charges
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: 'vpc' # Allocate the EIP for use with resources in a VPC
+  NAT: # Translates EC2 privateip into publicip
+    Type: 'AWS::EC2::NatGateway'
+    Properties:
+      AllocationId: !GetAtt 'EIPNAT.AllocationId' # Gets the Elastic ip from the EIPNAT (Just above)
+      SubnetId: !Ref NATSubnet
+
+
+
+  #----------------------------------------------------------------------------------------------------------
+
+
+
+
+  #---------------------------------- Private Subnet EC2 Running Docker -------------------------------------
+
+
+  DockerSubnet:
+    Type: 'AWS::EC2::Subnet'
+    Description: 'the private subnet which host a single ec2 instance to maintain docker'
+    Properties:
+      # noinspection YAMLIncompatibleTypes
+      AvailabilityZone: !Select [0, !GetAZs ''] #auto select 1st available zone in the deployed region
+      VpcId: !Ref DropBoxLiteVPC
+      CidrBlock: 192.168.3.0/24
+
+
+
+
+  DockerEC2IAMROLE:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument: #to manage which resources are allowed to assume this role
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com # only ec2 are allowed to assume this role
+            Action:
+              - sts:AssumeRole #this provides temporary credential to our resources
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore # required for talking to ssm agent from ssm manager, connect to it and run commands
+      Policies:
+        - PolicyName: AccessToS3
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject' # Needs permission for ec2 to talk to s3 for maintenance
+                Resource: # specify which S3 objects can be read
+                  - !Sub 'arn:aws:s3:::patch-baseline-snapshot-${AWS::Region}/*' #aws substitutes the variable
+                  - !Sub 'arn:aws:s3:::aws-ssm-${AWS::Region}/*'
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                Resource:
+                  - !Sub 'arn:aws:s3:::${S3BucketName}/*'
+              - Effect: Allow
+                Action:
+                  - 's3:ListBucket'
+                Resource:
+                  - !Sub 'arn:aws:s3:::${S3BucketName}'
+              - Effect: Allow
+                Action: # Object level
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:DeleteObject'
+                  - 's3:GetObjectVersion'
+                  - 's3:DeleteObjectVersion'
+                Resource:
+                  - !Sub '${UserFilesS3Bucket.Arn}/*'
+              - Effect: Allow
+                Action: # Bucket level
+                  - 's3:ListBucket'
+                Resource:
+                  - !Sub '${UserFilesS3Bucket.Arn}'
+
+  DockerEC2INSTANCEPROFILE:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Roles:
+        - !Ref DockerEC2IAMROLE
+
+
+
+  DockerEC2RouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref DropBoxLiteVPC
+
+  DockerEC2RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref DockerSubnet
+      RouteTableId: !Ref DockerEC2RouteTable
+
+  DockerEC2Routes:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref DockerEC2RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NAT
+
+
+
+
+  DockerEC2SecurityGroup: # Security groups are stateful
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Allow Private Tomcat Backend to talk to Nat and proxy'
+      VpcId: !Ref DropBoxLiteVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp # api request from proxy
+          FromPort: '8080'
+          ToPort: '8080'
+          CidrIp: '192.168.1.0/16'
+      #        - IpProtocol: tcp # Maintenance security updates from nat - since stateful can be handled automatically
+      #          FromPort: '1024'
+      #          ToPort: '65535'
+      #          CidrIp: '192.168.0.0/16'
+      SecurityGroupEgress:
+        - IpProtocol: tcp # Maintenance security updates from nat
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: '0.0.0.0/0'
+        - IpProtocol: tcp # Maintenance security updates from nat
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: '0.0.0.0/0'
+        - IpProtocol: tcp
+          FromPort: '5432'
+          ToPort: '5432'
+          CidrIp: '192.168.5.0/24'
+  #        - IpProtocol: tcp # Responses to api request - since stateful can be handled automatically
+  #          FromPort: '1024'
+  #          ToPort: '65535'
+  #          CidrIp: '192.168.0.0/16'
+
+  DockerEC2:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: 'ami-0006118602dfc1c09'
+      InstanceType: 't3.small'
+      IamInstanceProfile: !Ref DockerEC2INSTANCEPROFILE
+      SubnetId: !Ref DockerSubnet
+      SecurityGroupIds:
+        - !Ref DockerEC2SecurityGroup
+      UserData:
+        !Base64
+        Fn::Sub: | # Substitutes the s3 variables
+          #!/bin/bash
+          
+          set -euxo pipefail # makes the script stop when a command fails, and cloud-init's output will show you where.
+          
+          dnf install -y docker 
+          systemctl start docker # Starts the Docker service/daemon right now.
+          systemctl enable docker # Configure the Docker service to automatically start when the EC2 instance boots
+          
+          usermod -a -G docker ec2-user # Adds the ec2-user to docker group
+          
+          mkdir -p /home/ec2-user/webapps
+          
+          aws s3 sync s3://${S3BucketName} /home/ec2-user/webapps/
+          # syncs files from s3 object storage into our ec2 instance ebs storage 
+          
+          docker pull tomcat:11-jdk21-temurin
+          
+          docker run -d \
+            --name tomcat \
+            -p 8080:8080 \
+            -v /home/ec2-user/webapps:/usr/local/tomcat/webapps \
+            --restart always \
+            tomcat:11-jdk21-temurin
+
+    DependsOn:
+      - DockerEC2Routes
+      - Postgres
+
+
+  #----------------------------------------------------------------------------------------------------------
+
+  #---------------------------------------- Postgresql EC2 (Private) ----------------------------------------
+
+  PostgresSubnet:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      # noinspection YAMLIncompatibleTypes
+      AvailabilityZone: !Select [ 0, !GetAZs '']
+      VpcId: !Ref DropBoxLiteVPC
+      CidrBlock: '192.168.5.0/24'
+
+
+  PostgresEC2IAMRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+      Policies:
+        - PolicyName: PatchManager
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                Resource:
+                  - !Sub 'arn:aws:s3:::patch-baseline-snapshot-${AWS::Region}/*'
+                  - !Sub 'arn:aws:s3:::aws-ssm-${AWS::Region}/*'
+
+  PostgresEC2INSTANCEProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Roles:
+        - !Ref PostgresEC2IAMRole
+
+
+  PostgresEC2SecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Allow Postgres To Be Only Accessed Through Docker EC2'
+      VpcId: !Ref DropBoxLiteVPC
+      SecurityGroupIngress:
+        - CidrIp: '192.168.3.0/24' # db calls from docker ec2
+          ToPort: '5432'
+          FromPort: '5432'
+          IpProtocol: tcp
+      SecurityGroupEgress:
+        - IpProtocol: tcp # Maintenance security updates from nat
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: '0.0.0.0/0'
+        - IpProtocol: tcp # Maintenance security updates from nat
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: '0.0.0.0/0'
+
+
+  PostgresRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref DropBoxLiteVPC
+
+  PostgresRouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PostgresSubnet
+      RouteTableId: !Ref PostgresRouteTable
+
+  PostgresRoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PostgresRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NAT
+
+
+  PostgresInternalDnsRecord:
+    Type: 'AWS::Route53::RecordSet'
+    Properties:
+      HostedZoneId: !Ref VpcDnsHostedZone
+      Name: postgres.dropbox-lite.internal
+      Type: A # In dns type a record maps mnemonic to ipv4
+      TTL: 60 # 60 sec in order avoid problems due to dns caches for db
+      ResourceRecords:
+        - !GetAtt Postgres.PrivateIp # the private ip of our postgres
+
+
+
+  Postgres:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: 'ami-0006118602dfc1c09'
+      InstanceType: 't3.small'
+      IamInstanceProfile: !Ref PostgresEC2INSTANCEProfile
+      SecurityGroupIds:
+        - !Ref PostgresEC2SecurityGroup
+      SubnetId: !Ref PostgresSubnet
+      UserData:
+        Fn::Base64:
+          !Sub |
+          #!/bin/bash
+          
+          # this is a complex userdata script if you want you can manually do the installation using Postgres.Readme.md
+          
+          set -e
+          
+          echo "Starting PostgreSQL setup..."
+          
+          EBS_DEVICE=""
+          
+          for i in {1..60}; do
+          
+              # Find the first disk that is not the root disk.
+              # On this EC2 instance the root disk is nvme0n1,
+              # so the attached EBS volume will normally be another disk.
+              EBS_DEVICE=$(lsblk -dpno NAME,TYPE | awk '$2 == "disk" && $1 != "/dev/nvme0n1" {print $1; exit}')
+          
+              if [ -n "$EBS_DEVICE" ]; then
+                  echo "EBS volume found: $EBS_DEVICE"
+                  break
+              fi
+          
+              echo "Waiting for EBS volume..."
+              sleep 5
+          done
+          
+          if [ -z "$EBS_DEVICE" ]; then
+              echo "ERROR: PostgreSQL EBS volume was not found."
+              exit 1
+          fi
+          
+          
+          # Create filesystem only if the EBS volume is new
+          
+          if ! blkid "$EBS_DEVICE" >/dev/null 2>&1; then
+          
+              echo "No filesystem found. Creating XFS filesystem..."
+          
+              mkfs -t xfs "$EBS_DEVICE"
+          
+          else
+          
+              echo "Filesystem already exists on $EBS_DEVICE"
+          
+          fi
+          
+          
+          # Mount EBS at /data
+          
+          mkdir -p /data
+          
+          EBS_UUID=$(blkid -s UUID -o value "$EBS_DEVICE")
+          
+          if [ -z "$EBS_UUID" ]; then
+              echo "ERROR: Could not determine EBS UUID."
+              exit 1
+          fi
+          
+          # Add the volume to fstab if it is not already there.
+          if ! grep -q "UUID=$EBS_UUID" /etc/fstab; then
+          
+              echo "UUID=$EBS_UUID /data xfs defaults,nofail 0 2" >> /etc/fstab
+          
+          fi
+          
+          mount -a
+          
+          echo "EBS mounted at /data"
+          
+          
+          # Install PostgreSQL 18
+          
+          echo "Installing PostgreSQL 18..."
+          
+          dnf install -y postgresql18-server postgresql18
+          
+          
+          # Create PostgreSQL data directory
+          
+          mkdir -p /data/postgresql
+          
+          chown postgres:postgres /data/postgresql
+          chmod 700 /data/postgresql
+          
+          
+          # Tell systemd to use /data/postgresql as PGDATA
+          
+          mkdir -p /etc/systemd/system/postgresql.service.d
+          
+          cat > /etc/systemd/system/postgresql.service.d/override.conf <<'EOF'
+          [Unit]
+          RequiresMountsFor=/data/postgresql
+          
+          [Service]
+          Environment=PGDATA=/data/postgresql
+          EOF
+          
+          systemctl daemon-reload
+          
+          
+          # Initialize PostgreSQL only if it is not initialized
+          
+          if [ ! -f /data/postgresql/PG_VERSION ]; then
+          
+              echo "Initializing PostgreSQL..."
+          
+              sudo -u postgres /usr/bin/initdb -D /data/postgresql
+          
+          else
+          
+              echo "PostgreSQL cluster already exists. Skipping initdb."
+          
+          fi
+          
+          
+          # Start and enable PostgreSQL
+          
+          systemctl enable postgresql
+          systemctl start postgresql
+          
+          
+          # ------------------------------------------------------------
+          # PostgreSQL configuration
+          # ------------------------------------------------------------
+          
+          echo "Configuring PostgreSQL..."
+          
+          
+          # Allow PostgreSQL to listen on all network interfaces.
+          
+          sudo -u postgres psql -c "ALTER SYSTEM SET listen_addresses = '*';"
+          
+          
+          # Set password for the built-in postgres user.
+          #
+          # postgres already exists after initdb, so CREATE ROLE would
+          # not change its password.
+          
+          sudo -u postgres psql \
+              -c "ALTER ROLE postgres WITH PASSWORD '${PostgresPassword}';"
+          
+          
+          # Get the active pg_hba.conf path.
+          
+          PG_HBA_FILE=$(sudo -u postgres psql -Atc "SHOW hba_file;")
+          
+          echo "Using pg_hba.conf: $PG_HBA_FILE"
+          
+          
+          # Allow the Docker private subnet to connect to the
+          # dropbox-lite database using the postgres user.
+          
+          if ! grep -Fq "host    dropbox-lite    postgres    192.168.3.0/24    scram-sha-256" "$PG_HBA_FILE"; then
+          
+              echo "Adding Docker subnet to pg_hba.conf..."
+          
+              echo "host    dropbox-lite    postgres    192.168.3.0/24    scram-sha-256" >> "$PG_HBA_FILE"
+          
+          else
+          
+              echo "Docker subnet pg_hba rule already exists."
+          
+          fi
+          
+          
+          # Apply PostgreSQL configuration changes.
+          
+          systemctl restart postgresql
+          
+          
+          # ------------------------------------------------------------
+          # Create application user and database
+          # ------------------------------------------------------------
+          
+          sudo -u postgres psql <<EOF
+          DO \$\$
+          BEGIN
+              IF NOT EXISTS (
+                  SELECT FROM pg_catalog.pg_roles
+                  WHERE rolname = '${PostgresUsername}'
+              ) THEN
+                  CREATE ROLE ${PostgresUsername} LOGIN PASSWORD '${PostgresPassword}';
+              END IF;
+          END
+          \$\$;
+          
+          SELECT 'CREATE DATABASE "dropbox-lite" OWNER ${PostgresUsername}'
+          WHERE NOT EXISTS (
+              SELECT FROM pg_database WHERE datname = 'dropbox-lite'
+          )\gexec
+          EOF
+          
+          
+          echo "PostgreSQL setup completed successfully."
+
+    DependsOn:
+      - PostgresRoute
+
+  #Manually Mount Postgres to Another EBS storage And change the default dir path -- check postgres.Readme.md
+  PostgresEBSVolume: # Will persist in-spite of reboots or failures (Default EBS will be formatted on reboot)
+    Type: 'AWS::EC2::Volume' # define the ebs volume
+    Properties:
+      AvailabilityZone: !GetAtt Postgres.AvailabilityZone
+      Size: 5 # Create Volume with 5GB capacity
+      VolumeType: gp3 # Default volume type based on SSD
+  PostgresVolumeAttachment:
+    Type: 'AWS::EC2::VolumeAttachment'
+    Properties:
+      Device: '/dev/xvdf' # What device name should this EBS volume appear as on the EC2 instance?
+      #inspect the disks first using lsblk
+      InstanceId: !Ref Postgres
+      VolumeId: !Ref PostgresEBSVolume
+
+
+
+
+  #----------------------------------------------------------------------------------------------------------
+
+
+
+  #------------------------------------------ S3 Bucket policies --------------------------------------------
+
+  #  ApplicationFilesS3Bucket:
+  #    Type: 'AWS::S3::Bucket'
+  #    Properties:
+  #      BucketName: !Ref S3BucketName # policies applies to the whole bucket (which contains multiple objects)
+
+  ApplicationFilesS3BucketPolicies:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref S3BucketName
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement: # deny overrides allow but the reverse isn't true
+          - Sid: AllowDockerEC2RoleGetObject # can get objects only in the specified path
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt DockerEC2IAMROLE.Arn #points to exact ec2 instance we want to apply policies for
+            Action:
+              - 's3:GetObject'
+            Resource:
+              - !Sub 'arn:aws:s3:::${S3BucketName}/*'
+
+            # ListBucket operates on the bucket, not an individual object.
+          - Sid: AllowDockerEC2RoleListBucket # can list all the object inside the bucket
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt DockerEC2IAMROLE.Arn
+            Action:
+              - 's3:ListBucket'
+            Resource: # can list the contents of the s3 bucket
+              - !Sub 'arn:aws:s3:::${S3BucketName}'
+
+          - Sid: DenyAllOtherUsersExceptTheDockerRoleAndRoot
+            Effect: Deny
+            Principal: '*'
+            Action:
+              - 's3:*'
+            Resource:
+              - !Sub 'arn:aws:s3:::${S3BucketName}' # deny access to the bucket (bucketLevel)
+              - !Sub 'arn:aws:s3:::${S3BucketName}/*' #deny access to objects inside the bucket (objectLevel)
+            Condition:
+              ArnNotEquals:
+                aws:PrincipalArn:
+                  - !GetAtt DockerEC2IAMROLE.Arn
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+              StringNotLike:
+                aws:PrincipalArn:
+                  - 'arn:aws:iam::*:role/aws-service-role/cloudformation.amazonaws.com/*'
+
+
+
+
+  UserFilesS3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: "dropbox-lite.rc180920261131ist"
+  #      VersioningConfiguration:
+  #        Status: Enabled
+
+  UserFilesS3BucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref UserFilesS3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowOnlyDockerEC2ToViewS3UsersBucket
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt DockerEC2IAMROLE.Arn
+            Action:
+              - 's3:ListBucket'
+            Resource:
+              - !Sub '${UserFilesS3Bucket.Arn}'
+
+          - Sid: AllowOnlyDockerEC2ToViewS3UsersBucketObjects
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt DockerEC2IAMROLE.Arn #points to exact ec2 instance we want to apply policies for
+            Action:
+              - 's3:GetObject'
+              - 's3:PutObject'
+              - 's3:DeleteObject'
+              - 's3:GetObjectVersion'
+              - 's3:DeleteObjectVersion'
+            Resource:
+              - !Sub '${UserFilesS3Bucket.Arn}/*'
+
+          - Sid: DenyEverythingElse
+            Effect: Deny
+            Principal: '*'
+            Action:
+              - 's3:*'
+            Resource:
+              - !Sub '${UserFilesS3Bucket.Arn}'
+              - !Sub '${UserFilesS3Bucket.Arn}/*'
+            Condition:
+              ArnNotEquals:
+                aws:PrincipalArn:
+                  - !GetAtt DockerEC2IAMROLE.Arn
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+              #these are fixed conditions, not custom names
+              StringNotLike: # EXCEPT if it's the official CloudFormation system cleaning up or updating this bucket
+                aws:PrincipalArn:
+                  - 'arn:aws:iam::*:role/aws-service-role/cloudformation.amazonaws.com/*'
+
+# cloud trail will send an event to even bridge and event bridge uses the rules to invoke the lambda function,
+  # but they will also store the logs in s3 for event history -- so we need this bucket and following bucket policies
+
+  CloudTrailBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketEncryption: # object stored inside the bucket will be encrypted
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  CloudTrailBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref CloudTrailBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CloudTrailBucketPermissionCheck # to check if the bucket has suitable permissions
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt CloudTrailBucket.Arn
+
+          - Sid: ForCloudTrailLogs
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub '${CloudTrailBucket.Arn}/AWSLogs/${AWS::AccountId}/*'
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+
+
+  #----------------------------------------------------------------------------------------------------------
+
+
+
+
+  #------------------------------------------- Maintenance Work ---------------------------------------------
+
+
+  #⚠️ WARNING: Do Not Run/Start the Instance During the Sunday Patch Window
+  #Do not manually start, restart, or create/redeploy the EC2 instance around Sunday at 5:30 AM IST,
+  #when the SSM Maintenance Window is scheduled to run.
+  #Why? This setup uses the AWS-provided AWS-RunPatchBaseline document in two places:
+  #EC2 startup Association - Executes when the instance starts/comes online.
+  #SSM Maintenance Window - Scheduled every Sunday at 5:30 AM IST.
+  #If the EC2 instance starts at approximately the same time as the Maintenance Window,
+  #both the Association and the Maintenance Window can attempt to execute AWS-RunPatchBaseline against the same instance simultaneously.
+  #This can cause the patch operations to overlap/conflict, because both executions are attempting to perform patch-baseline operations on the same EC2 instance at the same time.
+  #Safe practice
+  #Avoid starting/restarting the instance at 5:30 AM IST on Sunday.
+  #If the instance must be started around this time, allow the startup patch operation to finish before the Maintenance Window begins, or schedule the Maintenance Window for a different time.
+
+  # association to patch security updates on startup
+  AssociationOnStartUp:
+    Type: 'AWS::SSM::Association'
+    Properties:
+      Name: 'AWS-RunPatchBaseline' # the name of an AWS-provided SSM Command document
+      # this will install only patches which are approved by the document
+      # noinspection YamlFormatViolation
+      Parameters:
+        Operation:
+          - Install
+      Targets:
+        - Key: InstanceIds
+          Values:
+            - !Ref DockerEC2
+
+
+  # maintenance window to patch security updates on schedule
+  #when
+  MaintenanceWindowTimings:
+    Type: 'AWS::SSM::MaintenanceWindow'
+    Properties:
+      Name: 'dropboxLite'
+      AllowUnassociatedTargets: false
+      # This controls whether the Maintenance Window can execute tasks against targets
+      # that aren't explicitly registered/associated with the window.
+      Duration: 2
+      Cutoff: 1
+      Schedule: 'Cron(0 0 ? * SUN * )' # every sunday at 5:30 IST
+      ScheduleTimezone: UTC
+
+  #where
+  MaintenanceTargetForEC2:
+    Type: 'AWS::SSM::MaintenanceWindowTarget'
+    Properties:
+      ResourceType: INSTANCE
+      Targets:
+        - Key: InstanceIds
+          Values:
+            - !Ref DockerEC2
+      WindowId: !Ref MaintenanceWindowTimings
+
+
+  #What
+  MaintenanceTask:
+    Type: 'AWS::SSM::MaintenanceWindowTask'
+    Properties:
+      MaxConcurrency: '1'
+      MaxErrors: '1'
+      Priority: 0
+      Targets:
+        - Key: WindowTargetIds
+          Values:
+            - !Ref MaintenanceTargetForEC2
+      WindowId: !Ref MaintenanceWindowTimings
+      TaskArn: 'AWS-RunPatchBaseline'
+      TaskType: 'RUN_COMMAND'
+      TaskInvocationParameters:
+        MaintenanceWindowRunCommandParameters: #fixed name
+          Parameters:
+            Operation:
+              - Install
+
+
+  #---------------------------------------------------------------------------------------------------------
+
+
+
+  #------------------------------------------ Lambda functions ---------------------------------------------
+  #----------------------- To use this we need to use AWS CLI
+  #------------------------------------And Enter this Command
+  #------------ sam build && sam deploy --guided ------------
+
+  AutoTagEveryEC2AndS3Created:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: org.rspk.dropbox_lite.lambdas.AutoAddTags
+      Runtime: java21
+      Timeout: 30
+      Architectures:
+        - arm64 # Choose the ARM architecture runtime for better price performance.
+      CodeUri: '.'
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: 'ec2:CreateTags'
+              Resource: "*" #all ec2 instances
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: 's3:PutBucketTagging'
+              Resource: "*" # all s3 instances
+      Events: # cloudTrail will emit events for every api call to AWS api -- make sure cloud trail is enabled
+        EventBridgeRule:
+          Type: EventBridgeRule  # Create an even bridge rule -- based on this lambda function invokes
+          Properties:
+            Pattern:
+              source:
+                - 'aws.ec2'
+                - 'aws.s3'
+              detail-type:
+                - 'AWS API Call via CloudTrail'
+              detail: # only invoke lambda function when there is runInstances call to ec2 or s3 create bucket call
+                eventSource:
+                  - 'ec2.amazonaws.com'
+                  - 's3.amazonaws.com'
+                eventName:
+                  - 'RunInstances'
+                  - 'CreateBucket'
+
+
+  AutoTagsEventsCloudTrail:
+    Type: 'AWS::CloudTrail::Trail'
+    DependsOn:
+      - CloudTrailBucketPolicy
+    Properties:
+      TrailName: AutoTagsEventsTrail
+      S3BucketName: !Ref CloudTrailBucket
+      IncludeGlobalServiceEvents: true
+      IsLogging: true
+      EnableLogFileValidation: true
+      IsMultiRegionTrail: true
+
+  #you can use the predefined python blueprint if you can
+  WebsiteLiveChecker:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: org.rspk.dropbox_lite.lambdas.PeriodicWebsiteChecking
+      Runtime: java21
+      Architectures:
+        - arm64 # Choose the ARM architecture runtime for better price performance.
+      CodeUri: '.'
+      Environment:
+        Variables:
+          site: 'http://www.rspk.dropbox-lite.com/dropbox-lite/health'
+          expected: 'Welcome to dropbox-lite'
+      Events:
+        Every30Minutes:
+          Type: Schedule
+          Properties:
+            Schedule: 'rate(5 minutes)'
+
+
+  WebsiteNotWorkingTopic:
+    Type: 'AWS::SNS::Topic'
+
+  WebsiteErrorAlertSubscription: # As soon as Notification msg reaches the subscription from alarm via sns topic, it grabs msg and sends email
+    Type: 'AWS::SNS::Subscription'
+    Properties:
+      Protocol: email
+      Endpoint: !Ref EmailForNotifications
+      TopicArn: !Ref WebsiteNotWorkingTopic
+
+  WebsiteErrorAlarm: # Trigger alarm notification msg when there are more 2 consecutive errors -- watches cloudwatch metrics
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Triggers when Website Live Checker fails more than 2 times'
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum # This adds up the total number of errors that occurred during your 1-hour Period
+      Period: 3600 # Time window in seconds (1 hour) -- since we check website health every 30 minutes only, and we expect 2 failures
+      EvaluationPeriods: 1
+      Threshold: 2 # website failed more than times in last min
+      ComparisonOperator: GreaterThanThreshold # triggers if errors > 2
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref WebsiteLiveChecker
+      AlarmActions:
+        - !Ref WebsiteNotWorkingTopic
+
+
+
+
+
+#---------------------------------------------------------------------------------------------------------

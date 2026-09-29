@@ -1,0 +1,17 @@
+.idea/
+my_learnings/
+src/main/java/org/rspk/dropbox_lite/config/
+src/main/java/org/rspk/dropbox_lite/controller/
+src/main/java/org/rspk/dropbox_lite/model/
+src/main/java/org/rspk/dropbox_lite/repository/
+src/main/java/org/rspk/dropbox_lite/service/
+src/main/java/org/rspk/dropbox_lite/utils/
+src/main/resources/
+src/test/
+sub_project/
+target/
+tomcat/
+.gitignore
+compose.yaml
+Postgres.Readme.md
+README.md
