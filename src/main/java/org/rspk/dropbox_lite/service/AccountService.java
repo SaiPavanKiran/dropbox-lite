@@ -31,7 +31,6 @@ import java.util.concurrent.TimeUnit;
 public class AccountService implements UserDetailsService {
 
     private final AccountJpa accountsJpa;
-    private final JWTService jwtService;
     private final PasswordEncoder passwordEncoder;
     private final OtpJpa otpJpa;
     private final MailServices mailServices;
@@ -39,13 +38,11 @@ public class AccountService implements UserDetailsService {
     @Autowired
     public AccountService(
             AccountJpa accountsJpa,
-            JWTService jwtService,
             PasswordEncoder passwordEncoder,
             OtpJpa otpJpa,
             MailServices mailServices
     ) {
         this.accountsJpa = accountsJpa;
-        this.jwtService = jwtService;
         this.passwordEncoder = passwordEncoder;
         this.otpJpa = otpJpa;
         this.mailServices = mailServices;
@@ -65,20 +62,15 @@ public class AccountService implements UserDetailsService {
 
 
     @Transactional
-    public String login(AccountLogin accountLogin){
+    public Account login(AccountLogin accountLogin){
         Account account = accountsJpa.findByEmail(accountLogin.email())
                 .orElseThrow(() -> new ResourceNotFoundException("user not found"));
 
         // Correct the argument order (raw input goes FIRST, stored hash goes SECOND)
         if (!passwordEncoder.matches(accountLogin.password(), account.getPassword()))
-            throw new ResourceNotFoundException("user not found");
+            throw new UnAuthorizedException("invalid credentials");
 
-        return jwtService.generateToken(account.getEmail(), account.getAccountId());
-    }
-
-    @Transactional
-    public String exchangeNewToken(AuthenticatedUser authUser) {
-        return jwtService.generateToken(authUser.username(), authUser.accountId());
+        return account;
     }
 
     @Transactional
@@ -107,12 +99,12 @@ public class AccountService implements UserDetailsService {
         OtpRequest otpReq = otpJpa.findById(email)
                 .orElseThrow(() -> new UnAuthorizedException("invalid otp"));
 
+        if(!Objects.equals(otpReq.getOtp(), otp))
+            throw new UnAuthorizedException("invalid otp");
+
         if(otpReq.getExpiredAt().isBefore(Instant.now())){
             throw new InvalidRequestException("otp has been expired");
         }
-
-        if(!Objects.equals(otpReq.getOtp(), otp))
-            throw new UnAuthorizedException("invalid otp");
 
         otpJpa.delete(otpReq);
     }

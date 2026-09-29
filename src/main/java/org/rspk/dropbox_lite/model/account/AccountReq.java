@@ -6,13 +6,14 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 public record AccountReq(
-        @NotNull(message = "email can't be null")
+        @NotBlank(message = "email can't be blank")
         @Email(message = "not a valid email")
+        @Size( min = 6, max = 254, message = "Email must be between 6 and 254 characters")
         String email,
         @NotNull(message = "password can't be null")
         @Size(min = 8, max = 30,
                 message = "password must be between 8 and 30 characters")
         String password,
-        @NotNull @NotBlank @Size(min = 8,max = 8,message = "otp must be 8 chars") String otp
+        @NotBlank @Size(min = 8,max = 8,message = "otp must be 8 chars") String otp
 ) {}
 

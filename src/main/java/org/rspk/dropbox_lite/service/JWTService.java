@@ -58,8 +58,16 @@ public class JWTService {
         return claims.getSubject();
     }
 
+    public boolean validateTokenRefresh(String token) {
+        Claims claims = extractClaims(token);
+        Date expiration = claims.getExpiration();
+        Date now = new Date();
+        long timeRemainingForExp = expiration.getTime() - now.getTime();
+        long fiveMinutesMillis = 5 * 60 * 1000;
+        return timeRemainingForExp <= fiveMinutesMillis;
+    }
 
-    public Boolean validateToken(String token, CustomUserDetails userDetails) {
+    public boolean validateToken(String token, CustomUserDetails userDetails) {
         Claims claims = extractClaims(token);
         String subject = claims.getSubject();
         UUID accountId = UUID.fromString(claims.get("accountId", String.class));
