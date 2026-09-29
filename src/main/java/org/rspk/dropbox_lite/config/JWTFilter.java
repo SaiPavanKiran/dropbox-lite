@@ -11,6 +11,8 @@ import org.rspk.dropbox_lite.model.account.CustomUserDetails;
 import org.rspk.dropbox_lite.service.AccountService;
 import org.rspk.dropbox_lite.service.JWTService;
 import org.rspk.dropbox_lite.utils.exceptions.UnAuthorizedException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -26,6 +28,7 @@ public class JWTFilter extends OncePerRequestFilter {
 
     private final JWTService jwtService;
     private final ApplicationContext context;
+    private static final Logger logger = LoggerFactory.getLogger(JWTFilter.class);
 
     public JWTFilter(
             JWTService jwtService,
@@ -60,13 +63,12 @@ public class JWTFilter extends OncePerRequestFilter {
                     }
                 }
             } catch (ExpiredJwtException e) {
-
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                 response.getWriter().write("jwt token has been expired");
                 return;
 
             } catch (JwtException e) {
-
+                logger.error("invalid jwt token - {}",token);
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                 response.getWriter().write("Invalid jwt token");
                 return;

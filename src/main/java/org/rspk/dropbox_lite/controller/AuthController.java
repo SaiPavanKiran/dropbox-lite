@@ -44,9 +44,9 @@ public class AuthController {
         if(jwtService.validateTokenRefresh(authHeader.substring(7))) {
             String jwtToken = jwtService.generateToken(authUser.username(), authUser.accountId());
             res.addHeader("Authorization","Bearer " + jwtToken);
+            return ResponseEntity.ok().build();
         }
-
-        return ResponseEntity.ok().build();
+        return ResponseEntity.badRequest().build();
     }
 
     @PostMapping("/otp")
