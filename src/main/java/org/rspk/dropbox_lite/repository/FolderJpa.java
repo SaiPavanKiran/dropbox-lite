@@ -39,28 +39,6 @@ public class FolderJpa {
     }
 
 
-    public long countFolderByParent(UUID parentFolderId,UUID accountId) {
-        Session session = sessionFactory.getCurrentSession();
-
-        StringBuilder hql = new StringBuilder(
-                String.format("SELECT COUNT(f) FROM %s f WHERE f.accountId=:accountId", Folder.class.getName())
-        );
-
-        if (parentFolderId != null) {
-            hql.append(" AND f.parentFolderId = :parentFolderId");
-        } else {
-            hql.append(" AND f.parentFolderId IS NULL");
-        }
-
-        var query = session.createSelectionQuery(hql.toString(), Long.class)
-                .setParameter("accountId",accountId);
-        if (parentFolderId != null) {
-            query.setParameter("parentFolderId", parentFolderId);
-        }
-
-        return query.getSingleResult();
-    }
-
     public List<Folder> findFoldersByParent(
             UUID parentFolderId,
             UUID accountId,
@@ -97,7 +75,7 @@ public class FolderJpa {
         Session session = sessionFactory.getCurrentSession();
 
         String hql = String.format(
-                "FROM %s f WHERE f.accountId=:accountId AND folderId IN :folderIds",
+                "FROM %s f WHERE f.accountId=:accountId AND folderId IN :folderIds ORDER BY name",
                 Folder.class.getName()
         );
 
@@ -131,7 +109,7 @@ public class FolderJpa {
                 Folder.class.getName()
         ));
 
-        if(parentFolderId != null) hql.append(" AND f.parentFolderId=:f.parentFolderId");
+        if(parentFolderId != null) hql.append(" AND f.parentFolderId=:parentFolderId");
         else hql.append(" AND f.parentFolderId IS NULL");
 
         var query = session.createSelectionQuery(hql.toString(), Folder.class)
@@ -147,12 +125,12 @@ public class FolderJpa {
         Session session = sessionFactory.getCurrentSession();
 
         StringBuilder hql = new StringBuilder(String.format(
-                "SELECT EXISTS (FROM %s f WHERE LOWER(f.name)=LOWER(:name) AND f.accountId=:accountId)",
+                "SELECT EXISTS (FROM %s f WHERE LOWER(f.name)=LOWER(:name) AND f.accountId=:accountId",
                 Folder.class.getName()
         ));
 
-        if(parentFolderId != null) hql.append(" AND f.parentFolderId=:f.parentFolderId");
-        else hql.append(" AND f.parentFolderId IS NULL");
+        if(parentFolderId != null) hql.append(" AND f.parentFolderId=:parentFolderId)");
+        else hql.append(" AND f.parentFolderId IS NULL)");
 
         var query = session.createSelectionQuery(hql.toString(), Boolean.class)
                 .setParameter("accountId",accountId)

@@ -8,14 +8,14 @@ import java.util.UUID;
 
 
 
-@Embeddable
+/*@Embeddable
 public class FilesRelationId {
     private UUID parentId;
     @Column(nullable = false)
     private UUID objectId;
     @Column(nullable = false,length = 255)
     private String name;
-    
+
     public FilesRelationId() {}
     public FilesRelationId(
             UUID parentId,
@@ -65,4 +65,4 @@ public class FilesRelationId {
     public int hashCode() {
         return Objects.hash(parentId,objectId,name);
     }
-}
+}*/

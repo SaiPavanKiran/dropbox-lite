@@ -7,6 +7,7 @@ import io.jsonwebtoken.security.Keys;
 import org.rspk.dropbox_lite.model.account.CustomUserDetails;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.KeyGenerator;
@@ -25,6 +26,12 @@ public class JWTService {
     @Value("${jwt.secret}")
     private String secretKey;
 
+    private final PasswordEncoder passwordEncoder;
+
+    public JWTService(PasswordEncoder passwordEncoder) {
+        this.passwordEncoder = passwordEncoder;
+    }
+
 
     public String generateToken(String username,UUID accountId) {
 
@@ -36,7 +43,7 @@ public class JWTService {
         return Jwts.builder()
                 .claims(claims)
                 .subject(username)
-                .claim("accountId",accountId)
+                .claim("accountId",passwordEncoder.encode(accountId.toString()))
                 .issuedAt(new Date(System.currentTimeMillis()))
                 .expiration(new Date(System.currentTimeMillis() + (30 * 60 * 1000)))
                 .signWith(getKey())
@@ -58,15 +65,23 @@ public class JWTService {
         return claims.getSubject();
     }
 
+    public boolean validateTokenRefresh(String token) {
+        Claims claims = extractClaims(token);
+        Date expiration = claims.getExpiration();
+        Date now = new Date();
+        long timeRemainingForExp = expiration.getTime() - now.getTime();
+        long fiveMinutesMillis = 5 * 60 * 1000;
+        return timeRemainingForExp <= fiveMinutesMillis;
+    }
 
-    public Boolean validateToken(String token, CustomUserDetails userDetails) {
+    public boolean validateToken(String token, CustomUserDetails userDetails) {
         Claims claims = extractClaims(token);
         String subject = claims.getSubject();
-        UUID accountId = UUID.fromString(claims.get("accountId", String.class));
+        String accountId = claims.get("accountId", String.class);
         Date expiration = claims.getExpiration();
         return subject.equals(userDetails.getUsername()) &&
                 expiration.after(new Date(System.currentTimeMillis())) &&
-                accountId.equals(userDetails.getAccountId());
+                passwordEncoder.matches(userDetails.getAccountId().toString(),accountId);
     }
 
     private Claims extractClaims(String token) {

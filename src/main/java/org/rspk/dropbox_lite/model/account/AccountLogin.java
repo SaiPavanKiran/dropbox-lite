@@ -1,11 +1,12 @@
 package org.rspk.dropbox_lite.model.account;
 
 import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 public record AccountLogin(
-        @NotNull(message = "email can't be null")
+        @NotBlank(message = "email can't be blank")
         @Email(message = "not a valid email")
         @Size( min = 6, max = 254, message = "Email must be between 6 and 254 characters")
         String email,

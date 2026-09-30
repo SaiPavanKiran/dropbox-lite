@@ -1,5 +1,6 @@
 package org.rspk.dropbox_lite.controller;
 
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -7,6 +8,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import org.rspk.dropbox_lite.model.account.*;
 import org.rspk.dropbox_lite.model.common.TemporalRes;
+import org.rspk.dropbox_lite.service.JWTService;
 import org.rspk.dropbox_lite.utils.exceptions.SomethingWentWrongException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -20,13 +22,16 @@ import java.util.UUID;
 @RequestMapping("/account")
 public class AccountController {
 
-    public final AccountService accountService;
+    private final AccountService accountService;
+    private final JWTService jwtService;
 
     @Autowired
     public AccountController(
-            AccountService accountService
+            AccountService accountService,
+            JWTService jwtService
     ) {
         this.accountService = accountService;
+        this.jwtService = jwtService;
     }
 
     /*Very minimal account set -- will improve later */
@@ -47,9 +52,15 @@ public class AccountController {
 
     @PostMapping("/login")
     ResponseEntity<?> AccountLogin(
-            @Valid @RequestBody AccountLogin accountLogin
-    ){
-        return ResponseEntity.ok(accountService.login(accountLogin));
+            @Valid @RequestBody AccountLogin accountLogin,
+            HttpServletResponse res
+    ) {
+        Account account = accountService.login(accountLogin);
+        String jwtToken = jwtService.generateToken(account.getEmail(), account.getAccountId());
+
+        res.addHeader("Authorization", "Bearer " + jwtToken);
+
+        return ResponseEntity.ok().build();
     }
 
     @PostMapping("/reset")
@@ -74,10 +85,13 @@ public class AccountController {
 
     @DeleteMapping
     ResponseEntity<?> deleteAccount(
+            @NotBlank(message = "email can't be blank")
             @Email(message = "not a valid email")
             @RequestParam("email")
             String email,
             @NotNull(message = "password can't be null")
+            @Size(min = 8, max = 30,
+                    message = "password must be between 8 and 30 characters")
             @RequestParam("password")
             String password,
             @NotBlank @Size(min = 8,max = 8,message = "otp must be 8 chars")

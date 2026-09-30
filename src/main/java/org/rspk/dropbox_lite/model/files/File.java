@@ -9,7 +9,7 @@ import java.util.UUID;
  *  CREATE TABLE files (
  *      file_id UUID PRIMARY KEY,
  *      account_id UUID NOT NULL,
- *      folder_id UUID NOT NULL,
+ *      folder_id UUID,
  *      s3_key VARCHAR(1024) NOT NULL,
  *      name VARCHAR(255) NOT NULL,
  *      content_type VARCHAR(255) NOT NULL,
@@ -19,7 +19,7 @@ import java.util.UUID;
  *      created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT now(),
  *      updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT now(),
  *      CONSTRAINT fk_files_account_id FOREIGN KEY (account_id) REFERENCES accounts(account_id),
- *      CONSTRAINT fk_files_folder_id FOREIGN KEY (folder_id) REFERENCES folders(folder_id),
+ *      CONSTRAINT fk_files_folder_id FOREIGN KEY (folder_id) REFERENCES folders(folder_id) ON DELETE CASCADE,
  *      CONSTRAINT check_files_upload_status CHECK (upload_status IN ('PENDING','COMPLETED','FAILED'))
  *  );
  * }

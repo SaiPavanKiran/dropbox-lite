@@ -1,11 +1,13 @@
 package org.rspk.dropbox_lite.controller;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import org.rspk.dropbox_lite.model.account.AuthenticatedUser;
 import org.rspk.dropbox_lite.model.common.TemporalRes;
 import org.rspk.dropbox_lite.model.files.*;
 import org.rspk.dropbox_lite.service.FileService;
 import org.rspk.dropbox_lite.service.FilesRelationService;
+import org.rspk.dropbox_lite.utils.common_functions.StringUtils;
 import org.rspk.dropbox_lite.utils.exceptions.SomethingWentWrongException;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -90,14 +92,16 @@ public class FileController {
             produces = { MediaType.APPLICATION_JSON_VALUE }
     )
     ResponseEntity<?> uploadActualFile(
-            @PathVariable("id") UUID fileId,
+            @NotBlank
+            @org.hibernate.validator.constraints.UUID(message = "not a valid id")
+            @PathVariable("id") String fileId,
             @RequestParam("file") MultipartFile actualFile,
             Authentication authentication
     ) {
         AuthenticatedUser authUser = (AuthenticatedUser) authentication.getPrincipal();
         if(authUser == null) throw new SomethingWentWrongException("unable to find user auth details");
 
-        File file = fileService.uploadFile(actualFile,authUser.accountId(),fileId);
+        File file = fileService.uploadFile(actualFile,authUser.accountId(),StringUtils.toUUIDorNull(fileId));
         return ResponseEntity.ok(getFileResponse(file));
     }
 
@@ -114,35 +118,41 @@ public class FileController {
 
     @PostMapping("/{id}/copy")
     ResponseEntity<?> copyToFolder(
-            @PathVariable("id") UUID fileId,
-            @Valid @RequestBody CopyOrMoveFile copyFile,
+            @NotBlank
+            @org.hibernate.validator.constraints.UUID(message = "not a valid id")
+            @PathVariable("id") String fileId,
+            @Valid @RequestBody CopyFile copyFile,
             Authentication authentication
     ) {
         AuthenticatedUser authUser = (AuthenticatedUser) authentication.getPrincipal();
         if(authUser == null) throw new SomethingWentWrongException("unable to find user auth details");
 
         return ResponseEntity.ok(
-                getFileResponse(fileService.copyToFolder(authUser.accountId(),fileId,copyFile.toFolder()))
+                getFileResponse(fileService.copyToFolder(authUser.accountId(),StringUtils.toUUIDorNull(fileId), StringUtils.toUUIDorNull(copyFile.toFolder())))
         );
     }
 
     @PostMapping("/{id}/move")
     ResponseEntity<?> moveToFolder(
-            @PathVariable("id") UUID fileId,
-            @Valid @RequestBody CopyOrMoveFile moveFile,
+            @NotBlank
+            @org.hibernate.validator.constraints.UUID(message = "not a valid id")
+            @PathVariable("id") String fileId,
+            @Valid @RequestBody MoveFile moveFile,
             Authentication authentication
     ) {
         AuthenticatedUser authUser = (AuthenticatedUser) authentication.getPrincipal();
         if(authUser == null) throw new SomethingWentWrongException("unable to find user auth details");
 
         return ResponseEntity.ok(
-                getFileResponse(fileService.moveToFolder(authUser.accountId(),fileId,moveFile.toFolder()))
+                getFileResponse(fileService.moveToFolder(authUser.accountId(),StringUtils.toUUIDorNull(fileId),StringUtils.toUUIDorNull(moveFile.toFolder()),moveFile.replace()))
         );
     }
 
     @PatchMapping("/{id}/rename")
     ResponseEntity<?> renameFilename(
-            @PathVariable("id") UUID fileId,
+            @NotBlank
+            @org.hibernate.validator.constraints.UUID(message = "not a valid id")
+            @PathVariable("id") String fileId,
             @Valid @RequestBody RenameFile renameFile,
             Authentication authentication
     ) {
@@ -150,26 +160,29 @@ public class FileController {
         if(authUser == null) throw new SomethingWentWrongException("unable to find user auth details");
 
         return ResponseEntity.ok(
-                getFileResponse(fileService.renameFileName(authUser.accountId(),fileId,renameFile.name()))
+                getFileResponse(fileService.renameFileName(authUser.accountId(),StringUtils.toUUIDorNull(fileId),renameFile.name()))
         );
     }
 
 
     @DeleteMapping("/{id}")
     ResponseEntity<?> deleteFile(
-            @PathVariable("id") UUID fileId,
+            @NotBlank
+            @org.hibernate.validator.constraints.UUID(message = "not a valid id")
+            @PathVariable("id") String fileId,
             Authentication authentication
     ) {
         AuthenticatedUser authUser = (AuthenticatedUser) authentication.getPrincipal();
         if(authUser == null) throw new SomethingWentWrongException("unable to find user auth details");
 
-        fileService.deleteFile(fileId,authUser.accountId());
+        fileService.deleteFile(StringUtils.toUUIDorNull(fileId),authUser.accountId());
         return ResponseEntity.ok().build();
     }
 
 
     private FileResponse getFileResponse(File file) {
         return new FileResponse(
+                file.getFileId(),
                 file.getFolderId(),
                 file.getName(),
                 file.getContentType(),

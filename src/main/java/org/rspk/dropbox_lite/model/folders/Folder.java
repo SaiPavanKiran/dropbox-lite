@@ -15,7 +15,7 @@ import java.util.UUID;
  *      created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT now(),
  *      updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT now(),
  *      CONSTRAINT fk_folders_account_id FOREIGN KEY (account_id) REFERENCES accounts(account_id),
- *      CONSTRAINT fk_folders_parent_folder_id FOREIGN KEY (parent_folder_id) REFERENCES folders(folder_id)
+ *      CONSTRAINT fk_folders_parent_folder_id FOREIGN KEY (parent_folder_id) REFERENCES folders(folder_id) ON DELETE CASCADE
  *  );
  * }
  */

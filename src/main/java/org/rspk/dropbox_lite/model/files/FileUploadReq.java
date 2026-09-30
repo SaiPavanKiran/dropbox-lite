@@ -8,7 +8,8 @@ import org.rspk.dropbox_lite.utils.annotations.ValidMimeType;
 import java.util.UUID;
 
 public record FileUploadReq (
-    UUID folderId,
+    @org.hibernate.validator.constraints.UUID(message = "not a valid id")
+    String folderId,
     @NotBlank(message = "file name must be given")
     String name,
     @ValidMimeType(message = "invalid content type")
