@@ -6,6 +6,7 @@ import org.rspk.dropbox_lite.model.common.TemporalRes;
 import java.util.UUID;
 
 public record FileResponse (
+        UUID fileId,
         UUID folderId,
         String name,
         String contentType,

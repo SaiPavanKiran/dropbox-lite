@@ -19,8 +19,9 @@ public sealed interface ObjectsRes permits ObjectsRes.FolderObj ,ObjectsRes.File
 
     record FileObj(
             ObjectType type,
-            UUID folderId,
+            UUID fileId,
             String name,
+            UUID parentFolderId,
             String contentType,
             Long size,
             Boolean archived,

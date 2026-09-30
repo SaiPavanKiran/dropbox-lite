@@ -97,7 +97,7 @@ public class FileJpa {
         Session session = sessionFactory.getCurrentSession();
 
         String hql = String.format(
-                "FROM %s f WHERE f.accountId=:accountId AND f.fileId IN :fileIds",
+                "FROM %s f WHERE f.accountId=:accountId AND f.fileId IN :fileIds ORDER BY name",
                 File.class.getName()
         );
 
@@ -133,7 +133,7 @@ public class FileJpa {
         Session session = sessionFactory.getCurrentSession();
 
         String hql = String.format(
-                "SELECT f.s3Key FROM %s f WHERE f.accountId=:accountId AND fileId IN :fileIds",
+                "SELECT f.s3Key FROM %s f WHERE f.accountId=:accountId AND f.fileId IN :fileIds",
                 File.class.getName()
         );
 
@@ -141,6 +141,25 @@ public class FileJpa {
         var query = session.createSelectionQuery(hql,String.class)
                 .setParameter("accountId",accountId)
                 .setParameter("fileIds",fileIds);
+
+        return query.getResultList();
+    }
+
+    public List<String> findS3KeysByParentId(
+            UUID parentId,
+            UUID accountId
+    ) {
+        Session session = sessionFactory.getCurrentSession();
+
+        String hql = String.format(
+                "SELECT f.s3Key FROM %s f WHERE f.accountId=:accountId AND f.folderId=folderId",
+                File.class.getName()
+        );
+
+
+        var query = session.createSelectionQuery(hql,String.class)
+                .setParameter("accountId",accountId)
+                .setParameter("folderId",parentId);
 
         return query.getResultList();
     }

@@ -6,8 +6,8 @@ import java.util.List;
 import java.util.UUID;
 
 public record FilesArchiveReq(
-        List<UUID> fileIds,
-        List<UUID> folderIds,
+        List<@org.hibernate.validator.constraints.UUID(message = "not a valid id") String> fileIds,
+        List<@org.hibernate.validator.constraints.UUID(message = "not a valid id") String> folderIds,
         @NotNull(message = "can't accept null for boolean")
         Boolean allFiles
 ) {}

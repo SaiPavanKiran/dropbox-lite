@@ -37,7 +37,8 @@ public class SecurityCfg {
                 .authorizeHttpRequests( auth ->
                 auth
                         /* for these request the spring security doesn't check for authorization */
-                        .requestMatchers(HttpMethod.POST,"/account/login", "/account/create", "/health", "/auth/otp").permitAll()
+                        .requestMatchers(HttpMethod.POST,"/account/login", "/account/create", "/auth/otp").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/health").permitAll()
                         /* for any other request, check authorization before permitting */
                         .anyRequest().authenticated()
         ).httpBasic(Customizer.withDefaults())

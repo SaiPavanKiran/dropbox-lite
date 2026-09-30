@@ -39,7 +39,22 @@ public class ShareJpa {
                 .setParameter("recipientId", recipientId)
                 .setParameter("currentTime", Instant.now())
                 .setFirstResult(page * size)
-                .setMaxResults(size)
+                .setMaxResults(size + 1)
+                .getResultList();
+    }
+
+
+    public List<ShareObject> findByOwnerAccountId(UUID ownerId,int page,int size) {
+        Session session = sessionFactory.getCurrentSession();
+        String hql = String.format(
+                "FROM %s s WHERE s.id.ownerId=:ownerId",
+                ShareObject.class.getName()
+        );
+
+        return session.createSelectionQuery(hql,ShareObject.class)
+                .setParameter("ownerId",ownerId)
+                .setFirstResult(page * size)
+                .setMaxResults(size + 1)
                 .getResultList();
     }
 
@@ -54,13 +69,13 @@ public class ShareJpa {
                 .setParameter("ownerId",ownerId)
                 .setParameter("recipientId",recipientId)
                 .setParameter("objectId",objectId)
-                .getSingleResult();
+                .uniqueResult();
     }
 
     public boolean hasObjectShared(UUID recipientId,UUID objectId) {
         Session session = sessionFactory.getCurrentSession();
         String hql = String.format(
-                "SELECT EXISTS (SELECT 1 FROM %s s WHERE s.id.recipientId=:recipientId AND s.expiry > :currentTime AND s.id.objectId=:objectId",
+                "SELECT EXISTS (SELECT 1 FROM %s s WHERE s.id.recipientId=:recipientId AND s.expiry > :currentTime AND s.id.objectId=:objectId)",
                 ShareObject.class.getName()
         );
 
@@ -69,6 +84,20 @@ public class ShareJpa {
                 .setParameter("currentTime", Instant.now())
                 .setParameter("objectId",objectId)
                 .uniqueResult();
+    }
+
+    public void deleteSharedObject(UUID ownerId, UUID recipientId, UUID objectId) {
+        Session session = sessionFactory.getCurrentSession();
+        String hql = String.format(
+                "DELETE FROM %s s WHERE s.id.ownerId=:ownerId AND s.id.recipientId=:recipientId AND s.id.objectId=:objectId",
+                ShareObject.class.getName()
+        );
+
+        session.createMutationQuery(hql)
+                .setParameter("ownerId", ownerId)
+                .setParameter("recipientId", recipientId)
+                .setParameter("objectId", objectId)
+                .executeUpdate();
     }
 
 }

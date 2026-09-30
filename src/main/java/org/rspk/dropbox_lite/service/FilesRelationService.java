@@ -9,6 +9,9 @@ import org.rspk.dropbox_lite.model.objects.ObjectsRes;
 import org.rspk.dropbox_lite.repository.FileJpa;
 import org.rspk.dropbox_lite.repository.FolderJpa;
 import org.rspk.dropbox_lite.repository.FilesRelationJpa;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Slice;
+import org.springframework.data.domain.SliceImpl;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,7 +37,7 @@ public class FilesRelationService {
 
 
     @Transactional
-    public List<ObjectsRes> getObjects(
+    public Slice<ObjectsRes> getObjects(
             UUID parentFolderId,
             UUID accountId,
             int page,
@@ -48,19 +51,18 @@ public class FilesRelationService {
                 savedObjects.stream()
                         .collect(Collectors.partitioningBy(
                                 obj -> ObjectType.FILE.equals(obj.getType()),
-                                Collectors.mapping(mapper ->
-                                        mapper.getObjectRelationId().getObjectId(),
+                                Collectors.mapping(FilesRelation::getObjectId,
                                         Collectors.toList()
                                 )
                         ));
 
-        List<UUID> fileIds = result.get(true);
         List<UUID> folderIds = result.get(false);
+        List<UUID> fileIds = result.get(true);
 
 
-        fileJpa.findByIds(fileIds,accountId).forEach(file -> objects.add(getMappedFile(file)));
         folderJpa.findByIds(folderIds,accountId).forEach(folder -> objects.add(getMappedFolder(folder)));
-        return objects;
+        fileJpa.findByIds(fileIds,accountId).forEach(file -> objects.add(getMappedFile(file)));
+        return new SliceImpl<>(objects.subList(0,Math.min(savedObjects.size(),size)), PageRequest.of(page,size),savedObjects.size() > size);
     }
 
 
@@ -77,8 +79,9 @@ public class FilesRelationService {
     private ObjectsRes getMappedFile(File file) {
         return new ObjectsRes.FileObj(
                 ObjectType.FILE,
-                file.getFolderId(),
+                file.getFileId(),
                 file.getName(),
+                file.getFolderId(),
                 file.getContentType(),
                 file.getSize(),
                 file.getArchived(),
