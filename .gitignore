@@ -8,6 +8,7 @@ target/
 /.idea
 /.aws-sam
 samconfig.toml
+postman-github-token.txt
 
 ### IntelliJ IDEA ###
 .idea/modules.xml
