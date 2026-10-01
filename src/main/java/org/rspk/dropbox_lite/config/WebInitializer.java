@@ -23,4 +23,16 @@ public class WebInitializer extends AbstractAnnotationConfigDispatcherServletIni
     protected String[] getServletMappings() {
         return new String[] { "/" };
     }
+
+    @Override
+    protected void customizeRegistration(ServletRegistration.Dynamic registration) {
+        registration.setMultipartConfig(
+                new MultipartConfigElement(
+                        "/tmp",
+                        -1, // unlimited file size
+                        -1, // unlimited request size
+                        0   // write immediately to disk
+                )
+        );
+    }
 }

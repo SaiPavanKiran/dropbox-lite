@@ -4,6 +4,7 @@ import jakarta.mail.*;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 import org.rspk.dropbox_lite.utils.exceptions.SomethingWentWrongException;
+import org.rspk.dropbox_lite.utils.logs.CommonLogging;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -77,12 +78,14 @@ public class MailServices {
     }
 
 
-    private static Properties mailProperties(){
+    private static Properties mailProperties() {
         Properties props = new Properties();
-        props.put("mail.smtp.host","smtp.gmail.com");
-        props.put("mail.smtp.port","587");
+        props.put("mail.smtp.host", "smtp.gmail.com");
+        props.put("mail.smtp.port", "587");
         props.put("mail.smtp.auth", "true");
         props.put("mail.smtp.starttls.enable", "true");
+        props.put("mail.smtp.starttls.required", "true");
         return props;
     }
+
 }

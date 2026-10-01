@@ -46,7 +46,7 @@ public class AuthController {
             res.addHeader("Authorization","Bearer " + jwtToken);
             return ResponseEntity.ok().build();
         }
-        return ResponseEntity.badRequest().build();
+        return ResponseEntity.badRequest().body("we only accept refresh at certain intervals");
     }
 
     @PostMapping("/otp")

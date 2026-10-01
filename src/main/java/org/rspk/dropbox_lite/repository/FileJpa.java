@@ -4,6 +4,7 @@ import org.hibernate.Session;
 import org.hibernate.SessionFactory;
 import org.hibernate.query.QueryParameter;
 import org.rspk.dropbox_lite.model.files.File;
+import org.rspk.dropbox_lite.model.files.UploadStatus;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -133,33 +134,35 @@ public class FileJpa {
         Session session = sessionFactory.getCurrentSession();
 
         String hql = String.format(
-                "SELECT f.s3Key FROM %s f WHERE f.accountId=:accountId AND f.fileId IN :fileIds",
+                "SELECT f.s3Key FROM %s f WHERE f.accountId=:accountId AND f.fileId IN :fileIds AND f.uploadStatus=:uploadStatus",
                 File.class.getName()
         );
 
 
         var query = session.createSelectionQuery(hql,String.class)
                 .setParameter("accountId",accountId)
-                .setParameter("fileIds",fileIds);
+                .setParameter("fileIds",fileIds)
+                .setParameter("uploadStatus", UploadStatus.COMPLETED);
 
         return query.getResultList();
     }
 
-    public List<String> findS3KeysByParentId(
-            UUID parentId,
+    public List<String> findS3KeysByParentIds(
+            List<UUID> parentIds,
             UUID accountId
     ) {
         Session session = sessionFactory.getCurrentSession();
 
         String hql = String.format(
-                "SELECT f.s3Key FROM %s f WHERE f.accountId=:accountId AND f.folderId=folderId",
+                "SELECT f.s3Key FROM %s f WHERE f.accountId=:accountId AND f.folderId IN (:folderIds) AND f.uploadStatus=:uploadStatus",
                 File.class.getName()
         );
 
 
         var query = session.createSelectionQuery(hql,String.class)
                 .setParameter("accountId",accountId)
-                .setParameter("folderId",parentId);
+                .setParameter("folderIds",parentIds)
+                .setParameter("uploadStatus", UploadStatus.COMPLETED);
 
         return query.getResultList();
     }

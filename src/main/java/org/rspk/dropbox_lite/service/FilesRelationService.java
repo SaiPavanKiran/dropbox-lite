@@ -62,7 +62,7 @@ public class FilesRelationService {
 
         folderJpa.findByIds(folderIds,accountId).forEach(folder -> objects.add(getMappedFolder(folder)));
         fileJpa.findByIds(fileIds,accountId).forEach(file -> objects.add(getMappedFile(file)));
-        return new SliceImpl<>(objects.subList(0,Math.min(savedObjects.size(),size)), PageRequest.of(page,size),savedObjects.size() > size);
+        return new SliceImpl<>(objects.subList(0,Math.min(objects.size(), size)), PageRequest.of(page,size),savedObjects.size() > size);
     }
 
 

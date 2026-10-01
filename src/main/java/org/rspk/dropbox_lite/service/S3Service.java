@@ -107,19 +107,18 @@ public class S3Service implements S3DependentService{
     @Override
     public void createZipOfFiles(
             Supplier<List<String>> fetchFiles,
-            BiFunction<String,Long,File> uploadCreatedZipTo,
+            BiFunction<String, Long, File> uploadCreatedZipTo,
             String usersBucketName
     ) {
+        logger.info("inside async");
         Set<String> mappedNames = new HashSet<>();
 
         Path tempZip = null;
-        try {
+        try (S3Client s3Client = S3Client.builder().build()) {
             tempZip = Files.createTempFile("archive-", ".zip");
-            try (
-                    ZipOutputStream zipOut = new ZipOutputStream(Files.newOutputStream(tempZip));
-                    S3Client s3Client = S3Client.builder().build();
-            ) {
+            try (ZipOutputStream zipOut = new ZipOutputStream(Files.newOutputStream(tempZip))) {
                 fetchFiles.get().forEach(s3Key -> {
+                    logger.info("the we are in for loop and got s3 key -> {}",s3Key);
                     GetObjectRequest request = GetObjectRequest.builder()
                             .bucket(usersBucketName)
                             .key(s3Key)
@@ -134,7 +133,10 @@ public class S3Service implements S3DependentService{
                             mappedNames.add(fileName);
                             zipOut.putNextEntry(new ZipEntry(fileName));
                         } else {
-                            String mappedName = fileName + DATE_TIME_FORMATTER_WITH_MILLIS.format(Instant.now());
+                            int dotIndex = fileName.lastIndexOf(".");
+                            String withoutExt = dotIndex > 0 ? fileName.substring(0, dotIndex) : fileName;
+                            String extension = dotIndex > 0 ? fileName.substring(dotIndex) : "";
+                            String mappedName = withoutExt + "_" + DATE_TIME_FORMATTER_WITH_MILLIS.format(Instant.now()) + extension;
                             mappedNames.add(mappedName);
                             zipOut.putNextEntry(new ZipEntry(mappedName));
                         }
@@ -142,7 +144,7 @@ public class S3Service implements S3DependentService{
                         input.transferTo(zipOut);
 
                         zipOut.closeEntry();
-                    } catch (IOException ex) {
+                    } catch (Exception ex) {
                         logger.error("an io exception while processing file s3key - {}", s3Key);
                     }
 
@@ -154,7 +156,10 @@ public class S3Service implements S3DependentService{
                     DATE_TIME_FORMATTER_WITH_MILLIS.format(Instant.now()) +
                     ".zip";
 
-            File savedFile = uploadCreatedZipTo.apply(zipFileName,zipSize);
+            logger.info("the zip file name - {}",zipFileName);
+            File savedFile = uploadCreatedZipTo.apply(zipFileName, zipSize);
+
+            logger.info("the saved file - {}",savedFile);
 
             PutObjectRequest putRequest = PutObjectRequest.builder()
                     .bucket(usersBucketName)
@@ -162,14 +167,12 @@ public class S3Service implements S3DependentService{
                     .contentType("application/zip")
                     .build();
 
-            try (S3Client s3Client = S3Client.builder().build()) {
-                s3Client.putObject(
-                        putRequest,
-                        RequestBody.fromFile(tempZip)
-                );
-            }
+            s3Client.putObject(
+                    putRequest,
+                    RequestBody.fromFile(tempZip)
+            );
         } catch (IOException ex) {
-            logger.error("an io exception while processing file's",ex);
+            logger.error("an io exception while processing file's", ex);
         } finally {
             if (tempZip != null) {
                 try {
@@ -197,6 +200,8 @@ public class S3Service implements S3DependentService{
                             .key(s3key)
                             .build()
             );
+        } catch (Exception ex) {
+            logger.error("an exception while deleting s3 file's",ex);
         }
     }
 
@@ -216,6 +221,8 @@ public class S3Service implements S3DependentService{
                             .build())
                     .build();
             s3Client.deleteObjects(request);
+        }  catch (Exception ex) {
+            logger.error("an exception while bulk deleting s3 file's",ex);
         }
     }
 }

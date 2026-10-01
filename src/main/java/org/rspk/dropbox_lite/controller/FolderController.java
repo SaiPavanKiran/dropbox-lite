@@ -75,12 +75,12 @@ public class FolderController {
 
 
     @DeleteMapping("/{id}")
-    ResponseEntity<?> deleteFile(
+    ResponseEntity<?> deleteFolder(
             @NotBlank
             @org.hibernate.validator.constraints.UUID(message = "not a valid id")
             @PathVariable("id")
             String folderId,
-            @RequestParam(required = false,defaultValue = "false") boolean recursive,
+            @RequestParam(name = "recursive", required = false,defaultValue = "false") boolean recursive,
             Authentication authentication
     ) {
         AuthenticatedUser authUser = (AuthenticatedUser) authentication.getPrincipal();

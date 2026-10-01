@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -108,7 +109,11 @@ public class FolderService implements FolderDependentService {
         if(reservedFolderNames.contains(folder.getName()))
             throw new InvalidRequestException("can't delete reserved folder names");
 
-        List<String> s3Keys = fileJpa.findS3KeysByParentId(folder.getFolderId(),accountId);
+        ArrayList<UUID> folderIds = new ArrayList<>();
+        folderIds.add(folderId);
+        folderIds.addAll(folderJpa.findIdsByParentFolderIdRecursively(folderId,accountId));
+
+        List<String> s3Keys = fileJpa.findS3KeysByParentIds(folderIds,accountId);
 
 
         if(!recursive && !s3Keys.isEmpty())

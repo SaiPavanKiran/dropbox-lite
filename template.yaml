@@ -19,6 +19,13 @@ Parameters:
   EmailForNotifications:
     Type: String
     Description: 'Enter your email address to get sns notifications'
+  OwnerMail:
+    Type: String
+    Description: 'Enter the owner mail to sent otp from'
+  OwnerPassword:
+    Type: String
+    NoEcho: true
+    Description: 'Enter the owner mail password'
 
 
 
@@ -239,21 +246,7 @@ Resources:
         From: '443'
         To: '443'
       Egress: 'true'
-  #Needed to Deliver the otp to the user,
-  # The Gmail server does send response packets back. They are required for the SMTP connection to work. -- Tcp 2 way communication
-  # which is configured with RuleNumber 7
-  ACLEgressProxy587InternetEntry:
-    Type: 'AWS::EC2::NetworkAclEntry'
-    Properties:
-      NetworkAclId: !Ref ProxyACL
-      Protocol: '6' #SMTP over TCP (STARTTLS)
-      RuleNumber: '10'
-      RuleAction: 'allow'
-      CidrBlock: '0.0.0.0/0'
-      PortRange:
-        From: '587'
-        To: '587'
-      Egress: 'true'
+
 
 
 
@@ -405,12 +398,27 @@ Resources:
         From: '1024'
         To: '65535'
       Egress: 'false'
+  #Needed to Deliver the otp to the user,
+  # The Gmail server does send response packets back. They are required for the SMTP connection to work. -- Tcp 2 way communication
+  # which is configured with RuleNumber 7
+  ACLIngressProxy587InternetEntry:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref NATACL
+      Protocol: '6' #SMTP over TCP (STARTTLS)
+      RuleNumber: '4'
+      RuleAction: 'allow'
+      CidrBlock: '192.168.3.0/24'
+      PortRange:
+        From: '587'
+        To: '587'
+      Egress: 'false'
   #Egress
   ACLEgressNAT80ClientEntry:
     Type: 'AWS::EC2::NetworkAclEntry'
     Properties:
       NetworkAclId: !Ref NATACL
-      RuleNumber: '4'
+      RuleNumber: '5'
       Protocol: '6'
       RuleAction: 'allow'
       CidrBlock: '0.0.0.0/0'
@@ -423,7 +431,7 @@ Resources:
     Properties:
       NetworkAclId: !Ref NATACL
       Protocol: '6'
-      RuleNumber: '5'
+      RuleNumber: '6'
       RuleAction: 'allow'
       CidrBlock: '0.0.0.0/0'
       PortRange:
@@ -435,13 +443,25 @@ Resources:
     Properties:
       NetworkAclId: !Ref NATACL
       Protocol: '6'
-      RuleNumber: '6'
+      RuleNumber: '7'
       RuleAction: 'allow'
       CidrBlock: '192.168.0.0/16'
       PortRange:
         From: '1024'
         To: '65535'
       Egress: 'true'
+  ACLEgressNAT587InternetEntry:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      NetworkAclId: !Ref NATACL
+      RuleNumber: '8'
+      Protocol: '6'
+      RuleAction: 'allow'
+      CidrBlock: '0.0.0.0/0'
+      PortRange:
+        From: '587'
+        To: '587'
+      Egress: true
 
 
 
@@ -584,6 +604,11 @@ Resources:
           FromPort: '5432'
           ToPort: '5432'
           CidrIp: '192.168.5.0/24'
+        - IpProtocol: tcp # req for us to send otp
+          FromPort: '587'
+          ToPort: '587'
+          CidrIp: '0.0.0.0/0'
+
   #        - IpProtocol: tcp # Responses to api request - since stateful can be handled automatically
   #          FromPort: '1024'
   #          ToPort: '65535'
@@ -621,6 +646,8 @@ Resources:
           docker run -d \
             --name tomcat \
             -p 8080:8080 \
+            -e OWNER_MAIL='${OwnerMail}' \
+            -e OWNER_PASSWORD='${OwnerPassword}' \
             -v /home/ec2-user/webapps:/usr/local/tomcat/webapps \
             --restart always \
             tomcat:11-jdk21-temurin
@@ -1198,103 +1225,105 @@ Resources:
   #------------------------------------And Enter this Command
   #------------ sam build && sam deploy --guided ------------
 
-  AutoTagEveryEC2AndS3Created:
-    Type: 'AWS::Serverless::Function'
-    Properties:
-      Handler: org.rspk.dropbox_lite.lambdas.AutoAddTags
-      Runtime: java21
-      Timeout: 30
-      Architectures:
-        - arm64 # Choose the ARM architecture runtime for better price performance.
-      CodeUri: '.'
-      Policies:
-        - Version: '2012-10-17'
-          Statement:
-            - Effect: Allow
-              Action: 'ec2:CreateTags'
-              Resource: "*" #all ec2 instances
-        - Version: '2012-10-17'
-          Statement:
-            - Effect: Allow
-              Action: 's3:PutBucketTagging'
-              Resource: "*" # all s3 instances
-      Events: # cloudTrail will emit events for every api call to AWS api -- make sure cloud trail is enabled
-        EventBridgeRule:
-          Type: EventBridgeRule  # Create an even bridge rule -- based on this lambda function invokes
-          Properties:
-            Pattern:
-              source:
-                - 'aws.ec2'
-                - 'aws.s3'
-              detail-type:
-                - 'AWS API Call via CloudTrail'
-              detail: # only invoke lambda function when there is runInstances call to ec2 or s3 create bucket call
-                eventSource:
-                  - 'ec2.amazonaws.com'
-                  - 's3.amazonaws.com'
-                eventName:
-                  - 'RunInstances'
-                  - 'CreateBucket'
+# comment lambdas if you want don't want them -- none of the functionality will be affected
 
-
-  AutoTagsEventsCloudTrail:
-    Type: 'AWS::CloudTrail::Trail'
-    DependsOn:
-      - CloudTrailBucketPolicy
-    Properties:
-      TrailName: AutoTagsEventsTrail
-      S3BucketName: !Ref CloudTrailBucket
-      IncludeGlobalServiceEvents: true
-      IsLogging: true
-      EnableLogFileValidation: true
-      IsMultiRegionTrail: true
-
-  #you can use the predefined python blueprint if you can
-  WebsiteLiveChecker:
-    Type: 'AWS::Serverless::Function'
-    Properties:
-      Handler: org.rspk.dropbox_lite.lambdas.PeriodicWebsiteChecking
-      Runtime: java21
-      Architectures:
-        - arm64 # Choose the ARM architecture runtime for better price performance.
-      CodeUri: '.'
-      Environment:
-        Variables:
-          site: 'http://www.rspk.dropbox-lite.com/dropbox-lite/health'
-          expected: 'Welcome to dropbox-lite'
-      Events:
-        Every30Minutes:
-          Type: Schedule
-          Properties:
-            Schedule: 'rate(5 minutes)'
-
-
-  WebsiteNotWorkingTopic:
-    Type: 'AWS::SNS::Topic'
-
-  WebsiteErrorAlertSubscription: # As soon as Notification msg reaches the subscription from alarm via sns topic, it grabs msg and sends email
-    Type: 'AWS::SNS::Subscription'
-    Properties:
-      Protocol: email
-      Endpoint: !Ref EmailForNotifications
-      TopicArn: !Ref WebsiteNotWorkingTopic
-
-  WebsiteErrorAlarm: # Trigger alarm notification msg when there are more 2 consecutive errors -- watches cloudwatch metrics
-    Type: 'AWS::CloudWatch::Alarm'
-    Properties:
-      AlarmDescription: 'Triggers when Website Live Checker fails more than 2 times'
-      MetricName: Errors
-      Namespace: AWS/Lambda
-      Statistic: Sum # This adds up the total number of errors that occurred during your 1-hour Period
-      Period: 3600 # Time window in seconds (1 hour) -- since we check website health every 30 minutes only, and we expect 2 failures
-      EvaluationPeriods: 1
-      Threshold: 2 # website failed more than times in last min
-      ComparisonOperator: GreaterThanThreshold # triggers if errors > 2
-      Dimensions:
-        - Name: FunctionName
-          Value: !Ref WebsiteLiveChecker
-      AlarmActions:
-        - !Ref WebsiteNotWorkingTopic
+#  AutoTagEveryEC2AndS3Created:
+#    Type: 'AWS::Serverless::Function'
+#    Properties:
+#      Handler: org.rspk.dropbox_lite.lambdas.AutoAddTags
+#      Runtime: java21
+#      Timeout: 30
+#      Architectures:
+#        - arm64 # Choose the ARM architecture runtime for better price performance.
+#      CodeUri: '.'
+#      Policies:
+#        - Version: '2012-10-17'
+#          Statement:
+#            - Effect: Allow
+#              Action: 'ec2:CreateTags'
+#              Resource: "*" #all ec2 instances
+#        - Version: '2012-10-17'
+#          Statement:
+#            - Effect: Allow
+#              Action: 's3:PutBucketTagging'
+#              Resource: "*" # all s3 instances
+#      Events: # cloudTrail will emit events for every api call to AWS api -- make sure cloud trail is enabled
+#        EventBridgeRule:
+#          Type: EventBridgeRule  # Create an even bridge rule -- based on this lambda function invokes
+#          Properties:
+#            Pattern:
+#              source:
+#                - 'aws.ec2'
+#                - 'aws.s3'
+#              detail-type:
+#                - 'AWS API Call via CloudTrail'
+#              detail: # only invoke lambda function when there is runInstances call to ec2 or s3 create bucket call
+#                eventSource:
+#                  - 'ec2.amazonaws.com'
+#                  - 's3.amazonaws.com'
+#                eventName:
+#                  - 'RunInstances'
+#                  - 'CreateBucket'
+#
+#
+#  AutoTagsEventsCloudTrail:
+#    Type: 'AWS::CloudTrail::Trail'
+#    DependsOn:
+#      - CloudTrailBucketPolicy
+#    Properties:
+#      TrailName: AutoTagsEventsTrail
+#      S3BucketName: !Ref CloudTrailBucket
+#      IncludeGlobalServiceEvents: true
+#      IsLogging: true
+#      EnableLogFileValidation: true
+#      IsMultiRegionTrail: true
+#
+#  #you can use the predefined python blueprint if you can
+#  WebsiteLiveChecker:
+#    Type: 'AWS::Serverless::Function'
+#    Properties:
+#      Handler: org.rspk.dropbox_lite.lambdas.PeriodicWebsiteChecking
+#      Runtime: java21
+#      Architectures:
+#        - arm64 # Choose the ARM architecture runtime for better price performance.
+#      CodeUri: '.'
+#      Environment:
+#        Variables:
+#          site: 'http://www.rspk.dropbox-lite.com/dropbox-lite/health'
+#          expected: 'Welcome to dropbox-lite'
+#      Events:
+#        Every30Minutes:
+#          Type: Schedule
+#          Properties:
+#            Schedule: 'rate(5 minutes)'
+#
+#
+#  WebsiteNotWorkingTopic:
+#    Type: 'AWS::SNS::Topic'
+#
+#  WebsiteErrorAlertSubscription: # As soon as Notification msg reaches the subscription from alarm via sns topic, it grabs msg and sends email
+#    Type: 'AWS::SNS::Subscription'
+#    Properties:
+#      Protocol: email
+#      Endpoint: !Ref EmailForNotifications
+#      TopicArn: !Ref WebsiteNotWorkingTopic
+#
+#  WebsiteErrorAlarm: # Trigger alarm notification msg when there are more 2 consecutive errors -- watches cloudwatch metrics
+#    Type: 'AWS::CloudWatch::Alarm'
+#    Properties:
+#      AlarmDescription: 'Triggers when Website Live Checker fails more than 2 times'
+#      MetricName: Errors
+#      Namespace: AWS/Lambda
+#      Statistic: Sum # This adds up the total number of errors that occurred during your 1-hour Period
+#      Period: 3600 # Time window in seconds (1 hour) -- since we check website health every 30 minutes only, and we expect 2 failures
+#      EvaluationPeriods: 1
+#      Threshold: 2 # website failed more than times in last min
+#      ComparisonOperator: GreaterThanThreshold # triggers if errors > 2
+#      Dimensions:
+#        - Name: FunctionName
+#          Value: !Ref WebsiteLiveChecker
+#      AlarmActions:
+#        - !Ref WebsiteNotWorkingTopic
 
 
 

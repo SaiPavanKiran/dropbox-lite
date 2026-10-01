@@ -38,6 +38,38 @@ public class FolderJpa {
         else return Optional.empty();
     }
 
+    public List<UUID> findIdsByParentFolderIdRecursively(
+            UUID folderId,
+            UUID accountId
+    ) {
+        Session session = sessionFactory.getCurrentSession();
+
+        String sql = """
+            WITH RECURSIVE folder_tree AS (
+                SELECT folder_id
+                FROM folders
+                WHERE parent_folder_id = :folderId
+                  AND account_id = :accountId
+
+                UNION ALL
+
+                SELECT f.folder_id
+                FROM folders f
+                JOIN folder_tree ft
+                    ON f.parent_folder_id = ft.folder_id
+                WHERE f.account_id = :accountId
+            )
+            SELECT folder_id
+            FROM folder_tree
+            """;
+
+        return session
+                .createNativeQuery(sql, UUID.class)
+                .setParameter("folderId", folderId)
+                .setParameter("accountId", accountId)
+                .getResultList();
+    }
+
 
     public List<Folder> findFoldersByParent(
             UUID parentFolderId,

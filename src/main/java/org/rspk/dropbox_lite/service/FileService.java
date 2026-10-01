@@ -19,6 +19,7 @@ import org.rspk.dropbox_lite.utils.logs.CommonLogging;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -61,7 +62,9 @@ public class FileService {
     @Transactional
     public File upload(
             FileUploadReq fileUploadReq,
-            UUID accountId
+            UUID accountId,
+            boolean isArchived,
+            UploadStatus uploadStatus
     ) {
         UUID folderId = StringUtils.toUUIDorNull(fileUploadReq.folderId());
         if(folderId !=null && folderJpa.findById(folderId, accountId).isEmpty())
@@ -77,8 +80,8 @@ public class FileService {
                 fileUploadReq.name(),
                 fileUploadReq.contentType(), /*need to fix this since user can send any content type*/
                 fileUploadReq.size(),
-                false,
-                UploadStatus.PENDING
+                isArchived,
+                uploadStatus
         );
 
         File savedFile = fileJpa.save(file);
@@ -96,6 +99,7 @@ public class FileService {
         return savedFile;
     }
 
+    @Transactional
     public File uploadFile(
             MultipartFile file,
             UUID accountId,
@@ -103,6 +107,9 @@ public class FileService {
     ) {
         File savedFile = fileJpa.findById(fileId,accountId)
                 .orElseThrow(() -> new ResourceNotFoundException("file metadata not found"));
+
+        if(savedFile.getUploadStatus() == UploadStatus.COMPLETED)
+            throw new InvalidRequestException("file already uploaded");
 
         if(!savedFile.getAccountId().equals(accountId))
             throw  new ResourceNotFoundException("file metadata not found");
@@ -138,51 +145,52 @@ public class FileService {
                 () -> new ResourceNotFoundException("file not found")
         );
 
+        if(file.getUploadStatus() != UploadStatus.COMPLETED)
+            throw new InvalidRequestException("file upload is still pending");
+
         return Map.entry(
                 file,
                 s3DependentService.getPreSignedUrl(usersBucketName,file.getS3Key(),15).toString()
         );
     }
 
+    @Async("archiveExecutor")
     @Transactional
-    public String archiveFiles(
+    public void archiveFiles(
             FilesArchiveReq filesArchiveReq,
             UUID accountId
     ) {
-        List<UUID> allFileIds = new ArrayList<>(StringUtils.toUUIDList(filesArchiveReq.fileIds()));
-        allFileIds.addAll(filesRelationJpa.findByParentIds(StringUtils.toUUIDList(filesArchiveReq.folderIds()), accountId));
+        /*allFileIds.addAll(filesRelationJpa.findByParentIds(StringUtils.toUUIDList(filesArchiveReq.folderIds()), accountId));
         if(filesArchiveReq.allFiles()) {
             allFileIds.addAll(fileJpa.getIdsByAccountId(accountId));
-        }
+        }*/
 
-        createZip(allFileIds, accountId);
-
-        return "files archived successfully";
+        createZip(StringUtils.toUUIDList(filesArchiveReq.fileIds()), accountId);
     }
 
     private void createZip(
             List<UUID> fileIds,
             UUID accountId
     ) {
-        new Thread(() -> {
-            BiFunction<String, Long, File> uploadZip =
-                    (zipFileName, zipSize) -> {
-                        FileUploadReq uploadReq = new FileUploadReq(
-                                folderDependentService.createOrFindFolderUUID(".zip", accountId).toString(),
-                                zipFileName,
-                                "application/zip",
-                                zipSize
-                        );
+        BiFunction<String, Long, File> uploadZip =
+                (zipFileName, zipSize) -> {
+                    FileUploadReq uploadReq = new FileUploadReq(
+                            folderDependentService.createOrFindFolderUUID(".zip", accountId).toString(),
+                            zipFileName,
+                            "application/zip",
+                            zipSize
+                    );
 
-                        return upload(uploadReq, accountId);
-                    };
+                    return upload(uploadReq, accountId,true,UploadStatus.COMPLETED);
+                };
 
-            s3DependentService.createZipOfFiles(
-                    (() -> { return fileJpa.findS3KeysByIds(fileIds, accountId); }),
-                    uploadZip,
-                    usersBucketName
-            );
-        }).start();
+        s3DependentService.createZipOfFiles(
+                (() -> {
+                    return fileJpa.findS3KeysByIds(fileIds, accountId);
+                }),
+                uploadZip,
+                usersBucketName
+        );
     }
 
     @Transactional
@@ -205,7 +213,7 @@ public class FileService {
                 file.getSize()
         );
 
-        return upload(uploadReq, accountId);
+        return upload(uploadReq, accountId,false,file.getUploadStatus());
     }
 
     @Transactional
@@ -275,7 +283,8 @@ public class FileService {
                 () -> new ResourceNotFoundException("file not found")
         );
 
-        s3DependentService.deleteS3File(usersBucketName,file.getS3Key());
+        if(file.getUploadStatus() == UploadStatus.COMPLETED)
+            s3DependentService.deleteS3File(usersBucketName,file.getS3Key());
 
         fileJpa.deleteById(fileId,accountId);
     }

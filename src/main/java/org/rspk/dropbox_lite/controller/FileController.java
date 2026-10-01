@@ -49,15 +49,17 @@ public class FileController {
         );
     }
 
-    @GetMapping("/view")
+    @GetMapping("/view/{id}")
     ResponseEntity<?> viewFile(
-            @RequestParam("fileId") UUID fileId,
+            @NotBlank
+            @org.hibernate.validator.constraints.UUID(message = "not a valid id")
+            @PathVariable("id") String fileId,
             Authentication authentication
     ){
         AuthenticatedUser authUser = (AuthenticatedUser) authentication.getPrincipal();
         if(authUser == null) throw new SomethingWentWrongException("unable to find user auth details");
 
-        Map.Entry<File,String> fileDetails = fileService.viewFile(authUser.accountId(),fileId);
+        Map.Entry<File,String> fileDetails = fileService.viewFile(authUser.accountId(),StringUtils.toUUIDorNull(fileId));
         File file = fileDetails.getKey();
         return ResponseEntity.ok(
                 new DownloadFileRes(
@@ -81,13 +83,13 @@ public class FileController {
         AuthenticatedUser authUser = (AuthenticatedUser) authentication.getPrincipal();
         if(authUser == null) throw new SomethingWentWrongException("unable to find user auth details");
 
-        File file = fileService.upload(fileUploadReq,authUser.accountId());
+        File file = fileService.upload(fileUploadReq,authUser.accountId(),false,UploadStatus.PENDING);
         return ResponseEntity.ok(getFileResponse(file));
     }
 
 
     @PostMapping(
-            value = "/{id}/complete",
+            value = "upload/{id}/complete",
             consumes = {MediaType.MULTIPART_FORM_DATA_VALUE },
             produces = { MediaType.APPLICATION_JSON_VALUE }
     )
@@ -113,7 +115,8 @@ public class FileController {
         AuthenticatedUser authUser = (AuthenticatedUser) authentication.getPrincipal();
         if(authUser == null) throw new SomethingWentWrongException("unable to find user auth details");
 
-        return ResponseEntity.ok(fileService.archiveFiles(archiveReq,authUser.accountId()));
+        fileService.archiveFiles(archiveReq,authUser.accountId());
+        return ResponseEntity.ok("files archived successfully");
     }
 
     @PostMapping("/{id}/copy")

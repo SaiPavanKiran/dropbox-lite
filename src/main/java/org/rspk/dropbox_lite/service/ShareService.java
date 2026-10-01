@@ -2,11 +2,13 @@ package org.rspk.dropbox_lite.service;
 
 import org.rspk.dropbox_lite.model.account.Account;
 import org.rspk.dropbox_lite.model.files.File;
+import org.rspk.dropbox_lite.model.files.UploadStatus;
 import org.rspk.dropbox_lite.model.share.*;
 import org.rspk.dropbox_lite.repository.AccountJpa;
 import org.rspk.dropbox_lite.repository.FileJpa;
 import org.rspk.dropbox_lite.repository.ShareJpa;
 import org.rspk.dropbox_lite.utils.common_functions.StringUtils;
+import org.rspk.dropbox_lite.utils.exceptions.InvalidRequestException;
 import org.rspk.dropbox_lite.utils.exceptions.ResourceNotFoundException;
 import org.rspk.dropbox_lite.utils.logs.CommonLogging;
 import org.springframework.beans.factory.annotation.Value;
@@ -62,6 +64,7 @@ public class ShareService {
         /*we only use files for now*/
         UUID objectId = StringUtils.toUUIDorNull(shareObjectReq.objectId());
         File file = fileJpa.findById(objectId, accountId).orElseThrow(() -> new ResourceNotFoundException("object not found -- we only accept sharing files for now"));
+        if(file.getUploadStatus() != UploadStatus.COMPLETED) throw new InvalidRequestException("file upload is still pending");
         ShareObject shareObject = shareJpa.findSharedObjectByRecipientBy(accountId, recipient.getAccountId(), objectId);
         Instant expiry = Instant.now().plus(shareObjectReq.shareDurationInMin(), ChronoUnit.MINUTES);
         if (shareObject == null) {
@@ -86,15 +89,12 @@ public class ShareService {
     ) {
         List<ShareObject> shareObjects = shareJpa.findByRecipientAccountId(accountId, page, size);
 
-        CommonLogging.logger.info("the shared object is - {}",shareObjects.stream().map(ShareObject::getId).toList());
         List<UUID> ownerIds = shareObjects.stream()
                 .map(shareObject -> shareObject.getId().getOwnerId())
                 .toList();
 
         Map<UUID, String> accountMap = accountJpa.findByIds(ownerIds).stream()
                 .collect(Collectors.toMap(Account::getAccountId, Account::getEmail));
-
-        CommonLogging.logger.info("the account map is - {}",accountMap);
 
 
         List<SharedObjectsRes> responses =  shareObjects.stream().map(shareObject -> {
@@ -164,6 +164,9 @@ public class ShareService {
             File sharedFile = fileJpa.findById(objectId, owner.getAccountId()).orElseThrow(() ->
                     new ResourceNotFoundException("file not found")
             );
+
+            if(sharedFile.getUploadStatus() != UploadStatus.COMPLETED)
+                throw new ResourceNotFoundException("the shared file got missing");
 
             URL url = s3DependentService.getPreSignedUrl(usersBucketName, sharedFile.getS3Key(), 15);
 

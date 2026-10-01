@@ -3,6 +3,7 @@ package org.rspk.dropbox_lite.utils.common_functions;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
@@ -41,6 +42,7 @@ public class StringUtils {
     }
 
     public static List<UUID> toUUIDList(List<String> strings) {
+        if(strings == null) return Collections.emptyList();
         return strings.stream().map(UUID::fromString).toList();
     }
 
