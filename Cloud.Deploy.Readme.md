@@ -121,7 +121,7 @@ http://<PROXY_PUBLIC_IP>/dropbox-lite/
 
 Replace `<PROXY_PUBLIC_IP>` with the actual public IP address shown in the EC2 console.
 
-[Elastic_ip](link)
+![Public IP](images/public_ip.png)
 
 ## 3.-Private-Docker-EC2
 
