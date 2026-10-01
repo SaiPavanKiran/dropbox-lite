@@ -25,6 +25,12 @@ The project includes a local Docker Compose environment and an AWS deployment ar
 | Deployment           | AWS SAM, CloudFormation                                  |
 | Reverse Proxy        | Nginx                                                    |
 
+## API Documentation and Testing
+
+The [Dropbox Lite Postman Repository](https://github.com/SaiPavanKiran/dropbox-lite-postman) contains the Dropbox lite API calls for interacting with the application. Use it to explore the available endpoints, understand request parameters and test API functionality.
+
+**[Explore the Postman API Collection](https://github.com/SaiPavanKiran/dropbox-lite-postman)**
+
 ## Architecture
 
 More details at
