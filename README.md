@@ -28,7 +28,7 @@ The project includes a local Docker Compose environment and an AWS deployment ar
 ## Architecture
 
 More details at
-![Cloud.Deploy.Readme.md]([dropbox-lite/Cloud.Deploy.Readme.md at main · SaiPavanKiran/dropbox-lite](https://github.com/SaiPavanKiran/dropbox-lite/blob/main/Cloud.Deploy.Readme.md))
+[Cloud Deployment Guide](Cloud.Deploy.Readme.md)
 
 The cloud deployment consists of:
 
